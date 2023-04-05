@@ -1,0 +1,21 @@
+[profile.default]
+test = "test"
+out = "artifacts-forge"
+# via_ir = true
+optimizer = true
+optimizer_runs = 5_000
+gas-reports = ["*"]
+solc-version = "0.8.17"
+verbosity = 2
+fs_permissions = [{ access = "read-write", path = "./deployed/"}]
+remappings = [
+	'@openzeppelin/=node_modules/@openzeppelin/'
+]
+
+# [profile.lite.optimizer_details.yulDetails]
+# optimizerSteps = ''
+
+# [profile.lite]
+# optimizer = false
+
+# See more config options https://github.com/gakonst/foundry/tree/master/config

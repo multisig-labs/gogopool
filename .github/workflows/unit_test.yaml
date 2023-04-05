@@ -1,0 +1,26 @@
+name: Forge Unit Tests
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          npm i -g yarn
+          yarn install
+
+      - name: Foundry Test
+        uses: multisig-labs/foundry-test-action@v1

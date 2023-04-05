@@ -1,0 +1,28 @@
+{
+	"dictionaryDefinitions": [
+		{
+			"name": "cspell-ignore-words",
+			"path": "./cspell-ignore-words.txt",
+			"addWords": true
+		}
+	],
+	"dictionaries": ["cspell-ignore-words"],
+	"ignoreRegExpList": ["NodeID-[A-Za-z0-9]{32}"],
+	"ignorePaths": [
+		"/package.json",
+		"/project-words.txt",
+		"_purgatory",
+		".github",
+		".idea",
+		".openzeppelin",
+		".vscode",
+		"artifacts",
+		"artifacts-forge",
+		"broadcast",
+		"cache",
+		"lib",
+		"node_modules",
+		"storageLayout",
+		"typechain-types"
+	]
+}

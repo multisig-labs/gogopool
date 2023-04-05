@@ -1,0 +1,20 @@
+{
+	"editor.tabSize": 2,
+	"editor.detectIndentation": false,
+	"[solidity]": {
+		"editor.defaultFormatter": "esbenp.prettier-vscode"
+	},
+	"files.exclude": {
+		"node_modules/": true
+	},
+	"todo-tree.general.tags": [
+		"BUG",
+		"HACK",
+		"FIXME",
+		"TODO",
+		"XXX",
+		"[GGP]",
+		"[ ]",
+		"[x]"
+	]
+}

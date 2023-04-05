@@ -1,0 +1,45 @@
+# General
+_private
+.DS_Store
+.env
+.envrc
+.mnemonic
+coverage
+coverage.json
+dist
+node_modules
+
+.vscode/extensions.json
+.vscode/launch.json
+.vscode/settings.json
+.vscode/*.log
+
+#Hardhat files
+cache
+artifacts
+typechain
+typechain-types
+deployments
+.deps
+
+# Forge
+artifacts-forge
+out
+lcov.info
+broadcast
+
+# IntelliJ
+.idea
+
+# Openzeppelin Proxy files
+.openzeppelin
+
+# Dont ignore Fuji (43113)/Mainnet(43114) deployments, or templates
+deployed/*.json
+!deployed/*.tmpl.json
+!deployed/43113*
+!deployed/43114*
+
+broadcast/**/*.json
+!broadcast/*/43113/*
+!broadcast/*/43114/*
