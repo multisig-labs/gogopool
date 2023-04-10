@@ -24,12 +24,6 @@ import {WAVAX} from "../contracts/contract/utils/WAVAX.sol";
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
-// Contract addresses will ALWAYS be this in all envs for the specified seed word
-// WAVAX: 0x21CA9f2258De12e9f1cfb6c0313e61C028c15c42
-// Multicall3: 0x02871815f996Ebe1473A1C24F0dacF0f6965dB5F
-// Storage: 0xbf81Dc1F4a38D63c93dfb10b9b8819cF60180F1e
-// OneInchMock: 0x7981024fDf1ee22ba9154D61329F8Fa8f88520Da
-
 // Deploy script is idempotent based on addresses in ./deployed/<chainid>-addresses.json
 // This will deploy the protocol for both dev and prod. An additional step after this
 // will finalize the deploy for the correct environment
@@ -47,7 +41,6 @@ contract Deploy is Script, EnvironmentConfig {
 		CREATE3Factory fac;
 		Storage s;
 
-		// TODO should really check the deterministic addr and not rely on JSON?
 		if (isContractDeployed("CREATE3Factory")) {
 			console2.log("CREATE3Factory Factory exists, skipping...");
 			fac = CREATE3Factory(getAddress("CREATE3Factory"));
