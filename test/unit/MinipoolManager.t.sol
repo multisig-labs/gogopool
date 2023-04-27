@@ -1147,7 +1147,7 @@ contract MinipoolManagerTest is BaseTest {
 		uint256 rewards = minipoolMgr.getExpectedAVAXRewardsAmt(mp.duration, totalAVAX);
 		skip(14 days);
 
-		// cycling will error with insufficent collateralization
+		// cycling will error with insufficient collateralization
 		vm.startPrank(address(rialto));
 		vm.expectRevert(MinipoolManager.InsufficientGGPCollateralization.selector);
 		minipoolMgr.recordStakingEndThenMaybeCycle{value: totalAVAX + rewards}(mp.nodeID, block.timestamp, rewards);

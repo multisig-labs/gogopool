@@ -37,6 +37,39 @@ contract StakingTest is BaseTest {
 		vm.stopPrank();
 	}
 
+	function testGetStaker() public {
+		address alice = getActorWithTokens("alice", 0, 100 ether);
+		vm.startPrank(alice);
+		ggp.approve(address(staking), 100 ether);
+		staking.stakeGGP(100 ether);
+
+		int256 index = staking.getIndexOf(alice);
+
+		Staking.Staker memory expectedStaker = Staking.Staker({
+			stakerAddr: alice,
+			avaxAssigned: 0,
+			avaxStaked: 0,
+			avaxValidating: 0,
+			avaxValidatingHighWater: 0,
+			ggpRewards: 0,
+			ggpStaked: 100 ether,
+			lastRewardsCycleCompleted: 0,
+			rewardsStartTime: 0,
+			ggpLockedUntil: 0
+		});
+
+		assertEq(staking.getStaker(index).stakerAddr, expectedStaker.stakerAddr);
+		assertEq(staking.getStaker(index).avaxAssigned, expectedStaker.avaxAssigned);
+		assertEq(staking.getStaker(index).avaxStaked, expectedStaker.avaxStaked);
+		assertEq(staking.getStaker(index).avaxValidating, expectedStaker.avaxValidating);
+		assertEq(staking.getStaker(index).avaxValidatingHighWater, expectedStaker.avaxValidatingHighWater);
+		assertEq(staking.getStaker(index).ggpRewards, expectedStaker.ggpRewards);
+		assertEq(staking.getStaker(index).ggpStaked, expectedStaker.ggpStaked);
+		assertEq(staking.getStaker(index).lastRewardsCycleCompleted, expectedStaker.lastRewardsCycleCompleted);
+		assertEq(staking.getStaker(index).rewardsStartTime, expectedStaker.rewardsStartTime);
+		assertEq(staking.getStaker(index).ggpLockedUntil, expectedStaker.ggpLockedUntil);
+	}
+
 	function testGetTotalGGPStake() public {
 		assert(staking.getTotalGGPStake() == 0);
 		vm.startPrank(nodeOp1);
@@ -316,6 +349,99 @@ contract StakingTest is BaseTest {
 		assert(ggp.balanceOf(nodeOp1) == startingGGPAmt - amt);
 		assert(staking.getGGPStake(nodeOp1) == amt);
 		vm.stopPrank();
+	}
+
+	function testStakeOnBehalfOfMustBeAuthorized() public {
+		address authorizedStaker = staking.authorizedStaker();
+		dealGGP(authorizedStaker, 100 ether);
+		uint256 amt = 100 ether;
+
+		vm.expectRevert(Staking.NotAuthorized.selector);
+		staking.stakeGGPOnBehalfOf(nodeOp1, amt, 0);
+
+		vm.startPrank(guardian);
+		vm.expectRevert(Staking.NotAuthorized.selector);
+		staking.stakeGGPOnBehalfOf(nodeOp1, amt, 0);
+		vm.stopPrank();
+
+		vm.startPrank(authorizedStaker);
+		ggp.approve(address(staking), MAX_AMT);
+		staking.stakeGGPOnBehalfOf(nodeOp1, amt, 0);
+		vm.stopPrank();
+
+		assertEq(staking.getGGPStake(nodeOp1), amt);
+	}
+
+	function testStakeOnBehalfOfNoLock() public {
+		address authorizedStaker = staking.authorizedStaker();
+		dealGGP(authorizedStaker, 100 ether);
+		uint256 amt = 100 ether;
+		uint256 startingGGPAmtNodeOp1 = ggp.balanceOf(nodeOp1);
+		uint256 startingGGPAmtDelegator = ggp.balanceOf(authorizedStaker);
+
+		vm.startPrank(authorizedStaker);
+		ggp.approve(address(staking), MAX_AMT);
+		staking.stakeGGPOnBehalfOf(nodeOp1, amt, 0);
+		vm.stopPrank();
+
+		assertEq(ggp.balanceOf(authorizedStaker), startingGGPAmtDelegator - amt);
+		assertEq(ggp.balanceOf(nodeOp1), startingGGPAmtNodeOp1);
+		assertEq(staking.getGGPStake(nodeOp1), amt);
+
+		int256 stakerIndex = staking.getIndexOf(nodeOp1);
+
+		assertEq(store.getUint(keccak256(abi.encodePacked("staker.item", stakerIndex, ".ggpLockedUntil"))), 0);
+
+		vm.prank(nodeOp1);
+		staking.withdrawGGP(amt);
+		assertEq(ggp.balanceOf(nodeOp1), startingGGPAmtNodeOp1 + amt);
+	}
+
+	function testStakeOnBehalfOfLockRecentTimestamp() public {
+		address authorizedStaker = staking.authorizedStaker();
+		uint256 amt = 100 ether;
+		dealGGP(authorizedStaker, amt);
+		uint256 startingGGPAmtNodeOp1 = ggp.balanceOf(nodeOp1);
+
+		skip(100);
+		vm.startPrank(authorizedStaker);
+		ggp.approve(address(staking), MAX_AMT);
+		staking.stakeGGPOnBehalfOf(nodeOp1, amt, block.timestamp - 1);
+		vm.stopPrank();
+
+		int256 stakerIndex = staking.getIndexOf(nodeOp1);
+
+		assertEq(store.getUint(keccak256(abi.encodePacked("staker.item", stakerIndex, ".ggpLockedUntil"))), 0);
+
+		vm.prank(nodeOp1);
+		staking.withdrawGGP(amt);
+		assertEq(ggp.balanceOf(nodeOp1), startingGGPAmtNodeOp1 + amt);
+	}
+
+	function testStakeOnBehalfOfGGPWithLock() public {
+		address authorizedStaker = staking.authorizedStaker();
+		uint256 amt = 100 ether;
+		dealGGP(authorizedStaker, amt);
+		uint256 startingGGPAmtNodeOp1 = ggp.balanceOf(nodeOp1);
+		uint256 startingGGPAmtDelegator = ggp.balanceOf(authorizedStaker);
+
+		vm.startPrank(authorizedStaker);
+		ggp.approve(address(staking), MAX_AMT);
+		staking.stakeGGPOnBehalfOf(nodeOp1, amt, block.timestamp + 1);
+		vm.stopPrank();
+
+		assertEq(ggp.balanceOf(authorizedStaker), startingGGPAmtDelegator - amt);
+		assertEq(ggp.balanceOf(nodeOp1), startingGGPAmtNodeOp1);
+		assertEq(staking.getGGPStake(nodeOp1), amt);
+
+		vm.prank(nodeOp1);
+		vm.expectRevert(Staking.GGPLocked.selector);
+		staking.withdrawGGP(amt);
+
+		skip(2);
+		vm.prank(nodeOp1);
+		staking.withdrawGGP(amt);
+		assertEq(ggp.balanceOf(nodeOp1), startingGGPAmtNodeOp1 + amt);
 	}
 
 	function testStakeAndWithdrawGGPPaused() public {

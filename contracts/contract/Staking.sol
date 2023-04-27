@@ -28,6 +28,7 @@ import {SafeTransferLib} from "@rari-capital/solmate/src/utils/SafeTransferLib.s
 	staker.item<index>.ggpStaked = Total amt of GGP staked across all minipools
 	staker.item<index>.lastRewardsCycleCompleted = Last cycle which staker was rewarded for
 	staker.item<index>.rewardsStartTime = The timestamp when the staker registered for GGP rewards
+	staker.item<index>.ggpLockedUntil = Optional timestamp that locks staked GGP
 */
 
 /// @title GGP staking and staker attributes
@@ -37,8 +38,10 @@ contract Staking is Base {
 	using FixedPointMathLib for uint256;
 
 	error CannotWithdrawUnder150CollateralizationRatio();
+	error GGPLocked();
 	error InsufficientBalance();
 	error InvalidRewardsStartTime();
+	error NotAuthorized();
 	error StakerNotFound();
 
 	event GGPStaked(address indexed from, uint256 amount);
@@ -55,9 +58,11 @@ contract Staking is Base {
 		uint256 ggpStaked;
 		uint256 lastRewardsCycleCompleted;
 		uint256 rewardsStartTime;
+		uint256 ggpLockedUntil;
 	}
 
 	uint256 internal constant TENTH = 0.1 ether;
+	address public constant authorizedStaker = 0xd98C0e8352352b3c486Cc9676F1b593F4cf28102;
 
 	constructor(Storage storageAddress) Base(storageAddress) {
 		version = 1;
@@ -340,6 +345,24 @@ contract Staking is Base {
 		_stakeGGP(msg.sender, amount);
 	}
 
+	/// @notice Stake GGP on behalf of an address with optional locked until timestamp
+	/// 				Only specified authorizedStaker can stake on behalf of
+	/// @param stakerAddr Address to receive GGP stake
+	/// @param amount The amount of GGP to stake
+	/// @param ggpLockedUntil Time the staked GGP unlocks
+	function stakeGGPOnBehalfOf(address stakerAddr, uint256 amount, uint256 ggpLockedUntil) external {
+		if (msg.sender != authorizedStaker) {
+			revert NotAuthorized();
+		}
+		TokenGGP ggp = TokenGGP(getContractAddress("TokenGGP"));
+		ggp.safeTransferFrom(msg.sender, address(this), amount);
+		_stakeGGP(stakerAddr, amount);
+		if (ggpLockedUntil > block.timestamp) {
+			int256 stakerIndex = getIndexOf(stakerAddr);
+			setUint(keccak256(abi.encodePacked("staker.item", stakerIndex, ".ggpLockedUntil")), ggpLockedUntil);
+		}
+	}
+
 	/// @notice Convenience function to allow for restaking claimed GGP rewards
 	/// @param stakerAddr The C-chain address of a GGP staker in the protocol
 	/// @param amount The amount of GGP being staked
@@ -374,10 +397,18 @@ contract Staking is Base {
 	}
 
 	/// @notice Allows the staker to unstake their GGP if they are over the 150% collateralization ratio
+	/// 				and their tokens are not locked from stakeGGPOnBehalfOf
 	/// @param amount The amount of GGP being withdrawn
 	function withdrawGGP(uint256 amount) external {
 		if (amount > getGGPStake(msg.sender)) {
 			revert InsufficientBalance();
+		}
+
+		int256 stakerIndex = getIndexOf(msg.sender);
+		uint256 ggpLockedUntil = getUint(keccak256(abi.encodePacked("staker.item", stakerIndex, ".ggpLockedUntil")));
+
+		if (ggpLockedUntil > block.timestamp) {
+			revert GGPLocked();
 		}
 
 		emit GGPWithdrawn(msg.sender, amount);
@@ -434,6 +465,7 @@ contract Staking is Base {
 		staker.ggpStaked = getUint(keccak256(abi.encodePacked("staker.item", stakerIndex, ".ggpStaked")));
 		staker.lastRewardsCycleCompleted = getUint(keccak256(abi.encodePacked("staker.item", stakerIndex, ".lastRewardsCycleCompleted")));
 		staker.rewardsStartTime = getUint(keccak256(abi.encodePacked("staker.item", stakerIndex, ".rewardsStartTime")));
+		staker.ggpLockedUntil = getUint(keccak256(abi.encodePacked("staker.item", stakerIndex, ".ggpLockedUntil")));
 	}
 
 	/// @notice Get stakers in the protocol (limit=0 means no pagination)

@@ -50,6 +50,9 @@ deploy-dev: (_ping ETH_RPC_URL)
 	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} script/deploy.s.sol --verify
 	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} script/init-dev.s.sol
 
+deploy-contract-mainnet: (_ping ETH_RPC_URL)
+	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} script/deploy-contract.s.sol --verify
+
 init-fuji:
 	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} scripts/init-fuji.s.sol
 
@@ -66,8 +69,11 @@ deploy-anr: (_ping ETH_RPC_URL)
 # Verify a contract after it has been deployed
 # You will need the abi encoded storage address as a constructor argument for some of our contracts (seen below), can be gotten using snowtrace's verify UI or cast command like below.
 # Check foundry.toml for optimizations and contract for compiler-version
+verify-mainnet contract:
+	forge verify-contract --chain-id 43114 --num-of-optimizations 5000 --watch --constructor-args $(cast abi-encode "constructor(address)" $(jq -r .Storage deployed/43114-addresses.json)) --compiler-version v0.8.17+commit.8df45f5f $(jq -r .{{contract}} deployed/43114-addresses.json) contracts/contract/{{contract}}.sol:{{contract}} -e ${ETHERSCAN_API_KEY}
+
 verify-fuji contract:
-	forge verify-contract --chain-id 43113 --num-of-optimizations 6000 --watch --constructor-args $(cast abi-encode "constructor(address)" $(jq -r .Storage deployed/43113-addresses.json)) --compiler-version v0.8.17+commit.8df45f5f $(jq -r .{{contract}} deployed/43113-addresses.json) contracts/contract/{{contract}}.sol:{{contract}} ${ETHERSCAN_API_KEY}
+	forge verify-contract --chain-id 43113 --num-of-optimizations 5000 --watch --constructor-args $(cast abi-encode "constructor(address)" $(jq -r .Storage deployed/43113-addresses.json)) --compiler-version v0.8.17+commit.8df45f5f $(jq -r .{{contract}} deployed/43113-addresses.json) contracts/contract/{{contract}}.sol:{{contract}} -e ${ETHERSCAN_API_KEY}
 
 # HARDHAT_NETWORK should be "custom" for tasks, but must be "hardhat" when starting the node
 # Start hardhat node with with $MNEMONIC, chainid 43112 on port 9650
