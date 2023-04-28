@@ -59,13 +59,25 @@ const logtx = async (tx) => {
 
 // Only load the deployed contract addrs if they exist
 let addrs = {};
+let addrFilename;
 try {
-	const name = `../../deployed/43112-addresses.json`;
+	switch (process.env.HARDHAT_NETWORK) {
+		case "mainnet":
+			addrFilename = `../../deployed/43114-addresses.json`;
+			break;
+		case "fuji":
+			addrFilename = `../../deployed/43113-addresses.json`;
+			break;
+		default:
+			addrFilename = `../../deployed/43112-addresses.json`;
+			break;
+	}
 	// eslint-disable-next-line node/no-missing-require
-	addrs = require(name);
+	console.log(`Loading addresses from ${addrFilename}`);
+	addrs = require(addrFilename);
 	// console.log(addrs);
 } catch {
-	console.log(`../../deployed/43112-addresses.json`);
+	console.log(`error loading ${addrFilename}`);
 }
 
 const emptyWallet = (seed) => {
