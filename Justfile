@@ -114,8 +114,7 @@ test contract="." test="." *flags="":
 
 # Run forge unit tests forking $ETH_RPC_URL
 test-fork contract="." test="." *flags="":
-	@# Using date here to give some randomness to tests that use block.timestamp
-	forge test --fork-url=${ETH_RPC_URL} --fork-block-number=9565 --allow-failure --block-timestamp `date '+%s'` --match-contract {{contract}} --match-test {{test}} {{flags}}
+	forge test --fork-url=${ETH_RPC_URL} --allow-failure --match-contract {{contract}} --match-test {{test}} {{flags}}
 
 # Run forge unit tests whenever file changes occur
 test-watch contract="." test="." *flags="":
