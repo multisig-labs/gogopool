@@ -11,7 +11,7 @@ import {Vault} from "../contracts/contract/Vault.sol";
 
 contract GetGGPRewards is EnvironmentConfig {
 	function run() external {
-		uint256 amount = 100 ether;
+		uint256 amount = 5 ether;
 
 		loadAddresses();
 		loadUsers();

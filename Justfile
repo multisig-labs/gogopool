@@ -36,35 +36,21 @@ compile:
 # Compile the project with hardhat
 build: compile
 
-deploy-mainnet: (_ping ETH_RPC_URL)
+# Deploy contracts to ETH_RPC_URL
+deploy: (_ping ETH_RPC_URL)
 	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} script/deploy.s.sol --verify
 
-# Deploy contracts to Fuji and init actors and settings. Will have to remove deployed/43113-addresses.json if you want new deploy.
-# ETH_RPC_URL=https://api.avax-test.network/ext/bc/C/rpc, be sure to set ETHERSCAN_API_KEY as snowtrace api key too.
-deploy-fuji: (_ping ETH_RPC_URL)
-	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} script/deploy.s.sol --verify
-
-# Deploy contracts to an empty testnet and init actors and settings
-deploy-dev: (_ping ETH_RPC_URL)
-	rm -rf deployed/43112-addresses.json
-	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} script/deploy.s.sol --verify
-	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} script/init-dev.s.sol
-
-deploy-contract-mainnet: (_ping ETH_RPC_URL)
+# Deploy a single contract
+deploy-contract: (_ping ETH_RPC_URL)
 	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} script/deploy-contract.s.sol --verify
 
+# Initialize Fuji contract deployment
 init-fuji:
-	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} scripts/init-fuji.s.sol
+	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} script/init-fuji.s.sol
 
+# Initialize Mainnet contract deployment
 init-mainnet:
 	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} script/init-mainnet.s.sol
-
-# Deploy contracts to ANR and init actors and settings
-deploy-anr: (_ping ETH_RPC_URL)
-	rm -rf deployed/43112-addresses.json
-	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} script/deploy.s.sol
-	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} script/init-dev.s.sol
-	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} script/init-rialto.s.sol
 
 # Verify a contract after it has been deployed
 # You will need the abi encoded storage address as a constructor argument for some of our contracts (seen below), can be gotten using snowtrace's verify UI or cast command like below.
@@ -72,6 +58,7 @@ deploy-anr: (_ping ETH_RPC_URL)
 verify-mainnet contract:
 	forge verify-contract --chain-id 43114 --num-of-optimizations 5000 --watch --constructor-args $(cast abi-encode "constructor(address)" $(jq -r .Storage deployed/43114-addresses.json)) --compiler-version v0.8.17+commit.8df45f5f $(jq -r .{{contract}} deployed/43114-addresses.json) contracts/contract/{{contract}}.sol:{{contract}} -e ${ETHERSCAN_API_KEY}
 
+# Verify a fuji contract after it has been deployed
 verify-fuji contract:
 	forge verify-contract --chain-id 43113 --num-of-optimizations 5000 --watch --constructor-args $(cast abi-encode "constructor(address)" $(jq -r .Storage deployed/43113-addresses.json)) --compiler-version v0.8.17+commit.8df45f5f $(jq -r .{{contract}} deployed/43113-addresses.json) contracts/contract/{{contract}}.sol:{{contract}} -e ${ETHERSCAN_API_KEY}
 
@@ -160,6 +147,7 @@ review-settings:
 	end
 	puts lines.sort.uniq
 
+# View storage layout of a contract
 storage-layout contract:
 	forge inspect --pretty {{contract}} storage-layout
 
@@ -194,10 +182,6 @@ doctor:
 # Show lines of Solidity contract code (excluding tests)
 cloc:
     cloc contracts/contract --by-file --exclude-dir=utils
-
-# Send 100 GGP rewards to MY_ADDR set in env variable
-get-ggp-rewards:
-	forge script --broadcast --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} scripts/get-ggp-rewards.s.sol
 
 # Im a recipe that doesn't show up in the default list
 # Check if there is an http(s) server listening on [url]
