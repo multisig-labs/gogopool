@@ -1,0 +1,21 @@
+# This workflow adds all new Issues to multisig-labs Product Board
+#
+# You can adjust the behavior by modifying this file.
+name: Add new issues to Product Board project
+
+on:
+  issues:
+    types:
+      - opened
+
+jobs:
+  add-to-project:
+    name: Add issue to project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/add-to-project@v0.5.0
+        with:
+          # You can target a project in a different organization
+          # to the issue
+          project-url: https://github.com/orgs/multisig-labs/projects/23
+          github-token: ${{ secrets.ADD_ISSUE_TO_PM }}
