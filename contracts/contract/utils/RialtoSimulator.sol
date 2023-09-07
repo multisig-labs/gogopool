@@ -43,6 +43,14 @@ contract RialtoSimulator {
 		ggAVAX.depositAVAX{value: amount}();
 	}
 
+	function withdrawForDelegation(uint256 amount, address nodeID) public {
+		minipoolMgr.withdrawForDelegation(amount, nodeID);
+	}
+
+	function depositFromDelegation(uint256 rewards, address nodeID) public payable {
+		minipoolMgr.depositFromDelegation{value: msg.value}(rewards, nodeID);
+	}
+
 	function setGGPPriceInAVAX(uint256 price, uint256 timestamp) external {
 		oracle.setGGPPriceInAVAX(price, timestamp);
 	}

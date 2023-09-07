@@ -83,7 +83,13 @@ task("ggavax:total_assets", "Total assets in ggavax contract").setAction(
 task("ggavax:balance", "Balance of ggAVAX contract").setAction(async () => {
 	const ggavax = await get("TokenggAVAX");
 	const balAVAX = await hre.ethers.provider.getBalance(ggavax.address);
-	console.log("ggavax contract balance", ethers.utils.formatUnits(balAVAX));
+	console.log(
+		"ggavax contract AVAX balance",
+		ethers.utils.formatUnits(balAVAX)
+	);
+	const wavax = await get("WAVAX");
+	const bal = await wavax.balanceOf(ggavax.address);
+	console.log("ggavax contract WAVAX balance", ethers.utils.formatUnits(bal));
 });
 
 task("ggavax:preview_withdraw", "Preview shares -> assets && assets -> shares")

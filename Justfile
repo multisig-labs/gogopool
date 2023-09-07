@@ -56,11 +56,11 @@ init-mainnet:
 # You will need the abi encoded storage address as a constructor argument for some of our contracts (seen below), can be gotten using snowtrace's verify UI or cast command like below.
 # Check foundry.toml for optimizations and contract for compiler-version
 verify-mainnet contract:
-	forge verify-contract --chain-id 43114 --num-of-optimizations 5000 --watch --constructor-args $(cast abi-encode "constructor(address)" $(jq -r .Storage deployed/43114-addresses.json)) --compiler-version v0.8.17+commit.8df45f5f $(jq -r .{{contract}} deployed/43114-addresses.json) contracts/contract/{{contract}}.sol:{{contract}} -e ${ETHERSCAN_API_KEY}
+	forge verify-contract --chain-id 43114 --num-of-optimizations 1000 --watch --constructor-args $(cast abi-encode "constructor(address)" $(jq -r .Storage deployed/43114-addresses.json)) --compiler-version v0.8.17+commit.8df45f5f $(jq -r .{{contract}} deployed/43114-addresses.json) contracts/contract/{{contract}}.sol:{{contract}} -e ${ETHERSCAN_API_KEY}
 
 # Verify a fuji contract after it has been deployed
 verify-fuji contract:
-	forge verify-contract --chain-id 43113 --num-of-optimizations 5000 --watch --constructor-args $(cast abi-encode "constructor(address)" $(jq -r .Storage deployed/43113-addresses.json)) --compiler-version v0.8.17+commit.8df45f5f $(jq -r .{{contract}} deployed/43113-addresses.json) contracts/contract/{{contract}}.sol:{{contract}} -e ${ETHERSCAN_API_KEY}
+	forge verify-contract --chain-id 43113 --num-of-optimizations 1000 --watch --constructor-args $(cast abi-encode "constructor(address)" $(jq -r .Storage deployed/43113-addresses.json)) --compiler-version v0.8.17+commit.8df45f5f $(jq -r .{{contract}} deployed/43113-addresses.json) contracts/contract/{{contract}}.sol:{{contract}} -e ${ETHERSCAN_API_KEY}
 
 # HARDHAT_NETWORK should be "custom" for tasks, but must be "hardhat" when starting the node
 # Start hardhat node with with $MNEMONIC, chainid 43112 on port 9650

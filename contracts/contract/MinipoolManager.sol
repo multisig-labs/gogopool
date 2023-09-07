@@ -73,9 +73,12 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 	error NegativeCycleDuration();
 	error OnlyOwner();
 	error WithdrawAmountTooLarge();
+	error WithdrawForDelegationDisabled();
 
 	event GGPSlashed(address indexed nodeID, uint256 ggp);
 	event MinipoolStatusChanged(address indexed nodeID, MinipoolStatus indexed status);
+	event WithdrawForDelegation(address indexed nodeID, uint256 amount);
+	event DepositFromDelegation(address indexed nodeID, uint256 amount, uint256 rewardsAmount);
 
 	/// @dev Not used for storage, just for returning data from view functions
 	struct Minipool {
@@ -564,6 +567,33 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 		int256 minipoolIndex = onlyValidMultisig(nodeID);
 		setBytes32(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".errorCode")), errorCode);
 		_cancelMinipoolAndReturnFunds(nodeID, minipoolIndex);
+	}
+
+	/// @notice withdraw funds from liquid staking pool for delegation
+	/// @param nodeID optional 20-byte Avalance node ID (not stored, emitted in event for tracking purposes)
+	function withdrawForDelegation(uint256 amount, address nodeID) external onlyMultisig whenNotPaused {
+		ProtocolDAO dao = ProtocolDAO(getContractAddress("ProtocolDAO"));
+		if (!dao.getWithdrawForDelegationEnabled()) {
+			revert WithdrawForDelegationDisabled();
+		}
+		TokenggAVAX ggAVAX = TokenggAVAX(payable(getContractAddress("TokenggAVAX")));
+		if (amount > ggAVAX.amountAvailableForStaking()) {
+			revert WithdrawAmountTooLarge();
+		}
+		ggAVAX.withdrawForStaking(amount);
+		msg.sender.safeTransferETH(amount);
+		emit WithdrawForDelegation(nodeID, amount);
+	}
+
+	/// @notice deposit funds + rewards from delegating liquid staking funds
+	/// @param rewards amount of rewards earned
+	/// @param nodeID optional 20-byte Avalance node ID (not stored, emitted in event for tracking purposes)
+	function depositFromDelegation(uint256 rewards, address nodeID) external payable onlyMultisig {
+		// Return Liq stakers funds + rewards
+		uint256 amount = msg.value - rewards;
+		TokenggAVAX ggAVAX = TokenggAVAX(payable(getContractAddress("TokenggAVAX")));
+		ggAVAX.depositFromStaking{value: msg.value}(amount, rewards);
+		emit DepositFromDelegation(nodeID, amount, rewards);
 	}
 
 	//

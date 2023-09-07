@@ -216,6 +216,17 @@ contract ProtocolDAO is Base {
 		return getUint(keccak256("ProtocolDAO.MinCollateralizationRatio"));
 	}
 
+	/// @notice The ability of an enabled multisig to withdraw excess AVAX from ggAVAX to delegate and earn yield for the protocol
+	/// @return true if enabled
+	function getWithdrawForDelegationEnabled() public view returns (bool) {
+		return getBool(keccak256("ProtocolDAO.WithdrawForDelegationEnabled"));
+	}
+
+	/// @notice The ability of an enabled multisig to withdraw excess AVAX from ggAVAX to delegate and earn yield for the protocol
+	function setWithdrawForDelegationEnabled(bool b) public onlyGuardian {
+		return setBool(keccak256("ProtocolDAO.WithdrawForDelegationEnabled"), b);
+	}
+
 	//*** Contract Registration ***
 
 	/// @notice Upgrade a contract by registering a new address and name, and un-registering the existing address
