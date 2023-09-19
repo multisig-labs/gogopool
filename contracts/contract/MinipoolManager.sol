@@ -192,7 +192,23 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 	/// @param duration Requested validation period in seconds
 	/// @param delegationFee Percentage delegation fee in units of ether (2% is 20_000)
 	/// @param avaxAssignmentRequest Amount of requested AVAX to be matched for this Minipool
-	function createMinipool(address nodeID, uint256 duration, uint256 delegationFee, uint256 avaxAssignmentRequest) external payable whenNotPaused {
+	function createMinipool(address nodeID, uint256 duration, uint256 delegationFee, uint256 avaxAssignmentRequest) public payable whenNotPaused {
+		this.createMinipoolOnBehalfOf{value: msg.value}(msg.sender, nodeID, duration, delegationFee, avaxAssignmentRequest);
+	}
+
+	/// @notice Accept AVAX deposit from node operator to create a Minipool. Node Operator must be staking GGP. Open to public.
+	/// @param owner C-chain address representing the minipool owner
+	/// @param nodeID 20-byte Avalanche node ID
+	/// @param duration Requested validation period in seconds
+	/// @param delegationFee Percentage delegation fee in units of ether (2% is 20_000)
+	/// @param avaxAssignmentRequest Amount of requested AVAX to be matched for this Minipool
+	function createMinipoolOnBehalfOf(
+		address owner,
+		address nodeID,
+		uint256 duration,
+		uint256 delegationFee,
+		uint256 avaxAssignmentRequest
+	) external payable whenNotPaused {
 		if (nodeID == address(0)) {
 			revert InvalidNodeID();
 		}
@@ -220,14 +236,14 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 		}
 
 		Staking staking = Staking(getContractAddress("Staking"));
-		staking.increaseAVAXStake(msg.sender, msg.value);
-		staking.increaseAVAXAssigned(msg.sender, avaxAssignmentRequest);
+		staking.increaseAVAXStake(owner, msg.value);
+		staking.increaseAVAXAssigned(owner, avaxAssignmentRequest);
 
-		if (staking.getRewardsStartTime(msg.sender) == 0) {
-			staking.setRewardsStartTime(msg.sender, block.timestamp);
+		if (staking.getRewardsStartTime(owner) == 0) {
+			staking.setRewardsStartTime(owner, block.timestamp);
 		}
 
-		uint256 ratio = staking.getCollateralizationRatio(msg.sender);
+		uint256 ratio = staking.getCollateralizationRatio(owner);
 		if (ratio < dao.getMinCollateralizationRatio()) {
 			revert InsufficientGGPCollateralization();
 		}
@@ -257,7 +273,7 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 		setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".status")), uint256(MinipoolStatus.Prelaunch));
 		setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".duration")), duration);
 		setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".delegationFee")), delegationFee);
-		setAddress(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".owner")), msg.sender);
+		setAddress(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".owner")), owner);
 		setAddress(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".multisigAddr")), multisig);
 		setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".avaxNodeOpInitialAmt")), msg.value);
 		setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".avaxNodeOpAmt")), msg.value);

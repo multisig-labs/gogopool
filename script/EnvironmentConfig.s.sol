@@ -50,12 +50,14 @@ contract EnvironmentConfig is Script {
 		"ClaimNodeOp",
 		"ClaimProtocolDAO",
 		"MinipoolManager",
+		"MinipoolStreamliner",
 		"MultisigManager",
 		"Ocyticus",
 		"Oracle",
 		"ProtocolDAO",
 		"RewardsPool",
 		"Staking",
+		"Timelock",
 		"Vault"
 	];
 
