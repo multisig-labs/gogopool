@@ -56,6 +56,7 @@ contract EnvironmentConfig is Script {
 		"ProtocolDAO",
 		"RewardsPool",
 		"Staking",
+		"Timelock",
 		"Vault"
 	];
 
