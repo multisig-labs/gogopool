@@ -17,24 +17,12 @@ contract DeployContract is Script, EnvironmentConfig {
 
 		vm.startBroadcast(deployer);
 
-		CREATE3Factory fac;
-
-		if (isContractDeployed("CREATE3Factory")) {
-			console2.log("CREATE3Factory Factory exists, skipping...");
-			fac = CREATE3Factory(getAddress("CREATE3Factory"));
-		} else {
-			fac = new CREATE3Factory();
-			saveAddress("CREATE3Factory", address(fac));
-		}
-
 		if (isContractDeployed("Timelock")) {
 			console2.log("Timelock exists, skipping...");
 		} else {
-			bytes memory creationCode = type(Timelock).creationCode;
-			address addr = fac.deploy("Timelock", creationCode);
-			saveAddress("Timelock", addr);
+			Timelock timelock = new Timelock();
+			saveAddress("Timelock", address(timelock));
 			// For Mainnet we xfer to Multisig
-			// Timelock timelock = Timelock(addr);
 			// address guardian = 0x6C104D5b914931BA179168d63739A297Dc29bCF3;
 			// timelock.transferOwnership(guardian);
 		}

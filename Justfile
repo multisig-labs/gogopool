@@ -58,6 +58,11 @@ init-mainnet:
 verify-mainnet contract:
 	forge verify-contract --chain-id 43114 --num-of-optimizations 1000 --watch --constructor-args $(cast abi-encode "constructor(address)" $(jq -r .Storage deployed/43114-addresses.json)) --compiler-version v0.8.17+commit.8df45f5f $(jq -r .{{contract}} deployed/43114-addresses.json) contracts/contract/{{contract}}.sol:{{contract}} -e ${ETHERSCAN_API_KEY}
 
+# Verify a contract that doesnt have a constructor
+verify-mainnet-no-storage contract:
+	forge verify-contract --chain-id 43114 --num-of-optimizations 1000 --watch --compiler-version v0.8.17+commit.8df45f5f $(jq -r .{{contract}} deployed/43114-addresses.json) contracts/contract/{{contract}}.sol:{{contract}} -e ${ETHERSCAN_API_KEY}
+
+
 # Verify a fuji contract after it has been deployed
 verify-fuji contract:
 	forge verify-contract --chain-id 43113 --num-of-optimizations 1000 --watch --constructor-args $(cast abi-encode "constructor(address)" $(jq -r .Storage deployed/43113-addresses.json)) --compiler-version v0.8.17+commit.8df45f5f $(jq -r .{{contract}} deployed/43113-addresses.json) contracts/contract/{{contract}}.sol:{{contract}} -e ${ETHERSCAN_API_KEY}
