@@ -278,4 +278,20 @@ contract ProtocolDAO is Base {
 		deleteString(keccak256(abi.encodePacked("contract.name", addr)));
 		deleteBool(keccak256(abi.encodePacked("contract.exists", addr)));
 	}
+
+	/// @notice Sets a contract as an approved partner
+	/// @param roleName name of the role the address is receiving
+	/// @param addr the address the specified role is being set for
+	/// @param isEnabled if the addr is enabled or not for the roleName
+	function setRole(string memory roleName, address addr, bool isEnabled) public onlyGuardian {
+		setBool(keccak256(abi.encodePacked("Role", roleName, addr)), isEnabled);
+	}
+
+	/// @notice Verifies if an address has a role
+	/// @param roleName The name of the role to check against the address
+	/// @param addr the address to be checked for the specified role
+	/// @return boolean determining if the address has the specified role
+	function hasRole(string memory roleName, address addr) public view returns (bool) {
+		return getBool(keccak256(abi.encodePacked("Role", roleName, addr)));
+	}
 }

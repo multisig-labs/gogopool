@@ -3,6 +3,7 @@ pragma solidity 0.8.17;
 
 import {Base} from "./Base.sol";
 import {MinipoolManager} from "./MinipoolManager.sol";
+import {MinipoolStreamliner} from "./MinipoolStreamliner.sol";
 import {Oracle} from "./Oracle.sol";
 import {ProtocolDAO} from "./ProtocolDAO.sol";
 import {Storage} from "./Storage.sol";
@@ -345,12 +346,21 @@ contract Staking is Base {
 		_stakeGGP(msg.sender, amount);
 	}
 
+	/// @notice Stake GGP on behalf of an address
+	/// @param stakerAddr Address to receive GGP stake
+	/// @param amount The amount of GGP to stake
+	function stakeGGPOnBehalfOf(address stakerAddr, uint256 amount) external {
+		TokenGGP ggp = TokenGGP(getContractAddress("TokenGGP"));
+		ggp.safeTransferFrom(msg.sender, address(this), amount);
+		_stakeGGP(stakerAddr, amount);
+	}
+
 	/// @notice Stake GGP on behalf of an address with optional locked until timestamp
 	/// 				Only specified authorizedStaker can stake on behalf of
 	/// @param stakerAddr Address to receive GGP stake
 	/// @param amount The amount of GGP to stake
 	/// @param ggpLockedUntil Time the staked GGP unlocks
-	function stakeGGPOnBehalfOf(address stakerAddr, uint256 amount, uint256 ggpLockedUntil) external {
+	function stakeGGPOnBehalfOfWithLock(address stakerAddr, uint256 amount, uint256 ggpLockedUntil) external {
 		if (msg.sender != authorizedStaker) {
 			revert NotAuthorized();
 		}
