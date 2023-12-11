@@ -357,16 +357,16 @@ contract StakingTest is BaseTest {
 		uint256 amt = 100 ether;
 
 		vm.expectRevert(Staking.NotAuthorized.selector);
-		staking.stakeGGPOnBehalfOf(nodeOp1, amt, 0);
+		staking.stakeGGPOnBehalfOfWithLock(nodeOp1, amt, 0);
 
 		vm.startPrank(guardian);
 		vm.expectRevert(Staking.NotAuthorized.selector);
-		staking.stakeGGPOnBehalfOf(nodeOp1, amt, 0);
+		staking.stakeGGPOnBehalfOfWithLock(nodeOp1, amt, 0);
 		vm.stopPrank();
 
 		vm.startPrank(authorizedStaker);
 		ggp.approve(address(staking), MAX_AMT);
-		staking.stakeGGPOnBehalfOf(nodeOp1, amt, 0);
+		staking.stakeGGPOnBehalfOfWithLock(nodeOp1, amt, 0);
 		vm.stopPrank();
 
 		assertEq(staking.getGGPStake(nodeOp1), amt);
@@ -381,7 +381,7 @@ contract StakingTest is BaseTest {
 
 		vm.startPrank(authorizedStaker);
 		ggp.approve(address(staking), MAX_AMT);
-		staking.stakeGGPOnBehalfOf(nodeOp1, amt, 0);
+		staking.stakeGGPOnBehalfOfWithLock(nodeOp1, amt, 0);
 		vm.stopPrank();
 
 		assertEq(ggp.balanceOf(authorizedStaker), startingGGPAmtDelegator - amt);
@@ -406,7 +406,7 @@ contract StakingTest is BaseTest {
 		skip(100);
 		vm.startPrank(authorizedStaker);
 		ggp.approve(address(staking), MAX_AMT);
-		staking.stakeGGPOnBehalfOf(nodeOp1, amt, block.timestamp - 1);
+		staking.stakeGGPOnBehalfOfWithLock(nodeOp1, amt, block.timestamp - 1);
 		vm.stopPrank();
 
 		int256 stakerIndex = staking.getIndexOf(nodeOp1);
@@ -427,7 +427,7 @@ contract StakingTest is BaseTest {
 
 		vm.startPrank(authorizedStaker);
 		ggp.approve(address(staking), MAX_AMT);
-		staking.stakeGGPOnBehalfOf(nodeOp1, amt, block.timestamp + 1);
+		staking.stakeGGPOnBehalfOfWithLock(nodeOp1, amt, block.timestamp + 1);
 		vm.stopPrank();
 
 		assertEq(ggp.balanceOf(authorizedStaker), startingGGPAmtDelegator - amt);
