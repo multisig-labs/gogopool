@@ -29,14 +29,13 @@ contract TimelockTest is Test {
 		ggAVAXProxy = TransparentUpgradeableProxy(payable(0xA25EaF2906FA1a3a13EdAc9B9657108Af7B703e3));
 		ggAVAXImpl = TokenggAVAX(payable(0xf80Eb498bBfD45f5E2d123DFBdb752677757843E));
 		ggAVAXImplV2 = new MockTokenggAVAXV2();
-		timelock = new Timelock();
-		timelock.transferOwnership(guardian);
+		timelock = Timelock(address(0xcd385F1947D532186f3F6aaa93966E3e9C14af41));
 	}
 
 	function testMainnetAssumptions() public {
 		assertEq(proxyAdmin.getProxyImplementation(ggAVAXProxy), address(ggAVAXImpl));
 		assertEq(proxyAdmin.getProxyAdmin(ggAVAXProxy), address(proxyAdmin));
-		assertEq(proxyAdmin.owner(), guardian);
+		assertEq(proxyAdmin.owner(), address(timelock));
 
 		// Only proxyAdmin can call fns on the proxy
 		vm.expectRevert();
@@ -49,12 +48,7 @@ contract TimelockTest is Test {
 	function testTimelockUpgrade() public {
 		uint256 stakingTotalAssets = ggAVAX.stakingTotalAssets();
 
-		// Change owner of ProxyAdmin to the timelock contract
-		vm.prank(guardian);
-		proxyAdmin.transferOwnership(address(timelock));
-		assertEq(proxyAdmin.owner(), address(timelock));
-
-		// Guardian cant upgrade anymore
+		// Guardian can't upgrade anymore
 		vm.prank(guardian);
 		vm.expectRevert("Ownable: caller is not the owner");
 		proxyAdmin.upgrade(ggAVAXProxy, address(ggAVAXImplV2));
@@ -92,14 +86,8 @@ contract TimelockTest is Test {
 		assertGt(alice.balance, 0);
 	}
 
-	function testTimelockChangeProxyAdminAfterUpgrade() public {
-		assertEq(proxyAdmin.owner(), guardian);
-		// Change owner of ProxyAdmin to the timelock contract
-		vm.prank(guardian);
-		proxyAdmin.transferOwnership(address(timelock));
-		assertEq(proxyAdmin.owner(), address(timelock));
-
-		// Guardian cant upgrade anymore
+	function testTimelockChangeProxyAdmin() public {
+		// Guardian cant upgrade anymore, because timelock is now the admin on mainnet
 		vm.prank(guardian);
 		vm.expectRevert();
 		proxyAdmin.upgrade(ggAVAXProxy, address(ggAVAXImplV2));
@@ -112,7 +100,7 @@ contract TimelockTest is Test {
 		vm.expectRevert(Timelock.Timelocked.selector);
 		timelock.executeTransaction(id);
 
-		// After timelock, anyone can execute
+		// After delay, anyone can execute
 		skip(24 hours);
 		timelock.executeTransaction(id);
 

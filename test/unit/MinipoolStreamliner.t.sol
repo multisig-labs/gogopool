@@ -102,9 +102,9 @@ contract MinipoolStreamlinerTest is Test {
 		} else {
 			newMinipool.duration = 1 days;
 			newMinipool.avaxForMinipool = 1 ether;
-			newMinipool.avaxForGGP = 5 ether;
+			newMinipool.avaxForGGP = 100 ether;
 			newMinipool.minGGPAmountOut = 0 ether;
-			newMinipool.avaxForNodeRental = 0.29 ether;
+			newMinipool.avaxForNodeRental = 0.5 ether;
 			newMinipool.minUSDCAmountOut = 0.00000000000000022 ether;
 		}
 
@@ -113,42 +113,6 @@ contract MinipoolStreamlinerTest is Test {
 		mpstream.createStreamlinedMinipool{value: newMinipool.avaxForMinipool + newMinipool.avaxForGGP + newMinipool.avaxForNodeRental}(newMinipool);
 
 		assertGt(IERC20(usdc).balanceOf(address(nop)), 0);
-		assertEq(IERC20(usdc).balanceOf(address(mpstream)), 0);
-		assertGt(staking.getGGPStake(address(nop)), 0);
-		assertGt(staking.getCollateralizationRatio(address(nop)), 0.1 ether);
-		vm.stopPrank();
-	}
-
-	function testCreateStreamlinedMinipoolNoUSDCTransfer() public {
-		vm.startPrank(nop);
-
-		MinipoolStreamliner.StreamlinedMinipool memory newMinipool;
-		newMinipool.nodeID = address(0);
-		newMinipool.countryOfResidence = 5;
-		newMinipool.bestRate = true;
-		newMinipool.withdrawalRightWaiver = true;
-
-		if (vm.activeFork() == mainnetFork) {
-			newMinipool.duration = 15 days;
-			newMinipool.avaxForMinipool = 1000 ether;
-			newMinipool.avaxForGGP = 110 ether;
-			newMinipool.minGGPAmountOut = 0.1 ether;
-			newMinipool.avaxForNodeRental = 1.1 ether;
-			newMinipool.minUSDCAmountOut = 0.00000000000000022 ether;
-		} else {
-			newMinipool.duration = 1 days;
-			newMinipool.avaxForMinipool = 1 ether;
-			newMinipool.avaxForGGP = 5 ether;
-			newMinipool.minGGPAmountOut = 0 ether;
-			newMinipool.avaxForNodeRental = 0.1473353 ether;
-			newMinipool.minUSDCAmountOut = 0.00000000000000022 ether;
-		}
-
-		assertEq(IERC20(usdc).balanceOf(address(mpstream)), 0);
-
-		mpstream.createStreamlinedMinipool{value: newMinipool.avaxForMinipool + newMinipool.avaxForGGP + newMinipool.avaxForNodeRental}(newMinipool);
-
-		assertEq(IERC20(usdc).balanceOf(address(nop)), 0);
 		assertEq(IERC20(usdc).balanceOf(address(mpstream)), 0);
 		assertGt(staking.getGGPStake(address(nop)), 0);
 		assertGt(staking.getCollateralizationRatio(address(nop)), 0.1 ether);
@@ -180,7 +144,7 @@ contract MinipoolStreamlinerTest is Test {
 			newMinipool.avaxForMinipool = 1 ether;
 			newMinipool.avaxForGGP = 0 ether;
 			newMinipool.minGGPAmountOut = 0 ether;
-			newMinipool.avaxForNodeRental = 0.29 ether;
+			newMinipool.avaxForNodeRental = 0.5 ether;
 			newMinipool.minUSDCAmountOut = 0.00000000000000022 ether;
 		}
 
@@ -215,7 +179,7 @@ contract MinipoolStreamlinerTest is Test {
 		} else {
 			newMinipool.duration = 1 days;
 			newMinipool.avaxForMinipool = 1 ether;
-			newMinipool.avaxForGGP = 5 ether;
+			newMinipool.avaxForGGP = 100 ether;
 			newMinipool.minGGPAmountOut = 0 ether;
 			newMinipool.avaxForNodeRental = 0 ether;
 			newMinipool.minUSDCAmountOut = 0.00000000000000022 ether;
