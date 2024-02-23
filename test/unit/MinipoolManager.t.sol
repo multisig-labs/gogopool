@@ -1154,6 +1154,92 @@ contract MinipoolManagerTest is BaseTest {
 		vm.stopPrank();
 	}
 
+	function testCycleMinipoolCommission() public {
+		store.setUint(keccak256("ProtocolDAO.MinipoolNodeCommissionFeePct"), 0.15 ether);
+
+		uint256 duration = 4 weeks;
+		uint256 depositAmt = 1000 ether;
+		uint256 avaxAssignmentRequest = 1000 ether;
+		uint256 validationAmt = depositAmt + avaxAssignmentRequest;
+		uint128 ggpStakeAmt = 140 ether;
+
+		vm.startPrank(nodeOp);
+		ggp.approve(address(staking), MAX_AMT);
+		staking.stakeGGP(ggpStakeAmt);
+		MinipoolManager.Minipool memory mp = createMinipool(depositAmt, avaxAssignmentRequest, duration);
+		vm.stopPrank();
+
+		address liqStaker1 = getActorWithTokens("liqStaker1", MAX_AMT, MAX_AMT);
+		vm.prank(liqStaker1);
+		ggAVAX.depositAVAX{value: MAX_AMT}();
+
+		rialto.processMinipoolStart(mp.nodeID);
+
+		skip(duration / 2);
+
+		// Give rialto the rewards it needs
+		uint256 rewards = 10 ether;
+		deal(address(rialto), address(rialto).balance + rewards);
+
+		// Pay out the rewards and cycle
+		vm.prank(address(rialto));
+		minipoolMgr.recordStakingEndThenMaybeCycle{value: validationAmt + rewards}(mp.nodeID, block.timestamp, rewards);
+
+		MinipoolManager.Minipool memory mpCompounded = minipoolMgr.getMinipoolByNodeID(mp.nodeID);
+
+		uint256 expectedLiquidStakerAmt = depositAmt + rewards / 2 - ((rewards / 2).mulWadDown(dao.getMinipoolNodeCommissionFeePct()));
+
+		// NOTE: Subsequent tests demonstrate incorrectly calculated commission fee.
+		// Requires logic correction before reactivation.
+		assertEq(mpCompounded.avaxNodeOpAmt, expectedLiquidStakerAmt);
+		assertEq(mpCompounded.avaxNodeOpRewardAmt, 0);
+
+		assertEq(mpCompounded.avaxLiquidStakerAmt, expectedLiquidStakerAmt);
+		assertEq(mpCompounded.avaxLiquidStakerRewardAmt, 0);
+	}
+
+	function testCycleMinipoolCommissionZero() public {
+		store.setUint(keccak256("ProtocolDAO.MinipoolNodeCommissionFeePct"), 0 ether);
+
+		uint256 duration = 4 weeks;
+		uint256 depositAmt = 1000 ether;
+		uint256 avaxAssignmentRequest = 1000 ether;
+		uint256 validationAmt = depositAmt + avaxAssignmentRequest;
+		uint128 ggpStakeAmt = 140 ether;
+
+		vm.startPrank(nodeOp);
+		ggp.approve(address(staking), MAX_AMT);
+		staking.stakeGGP(ggpStakeAmt);
+		MinipoolManager.Minipool memory mp = createMinipool(depositAmt, avaxAssignmentRequest, duration);
+		vm.stopPrank();
+
+		address liqStaker1 = getActorWithTokens("liqStaker1", MAX_AMT, MAX_AMT);
+		vm.prank(liqStaker1);
+		ggAVAX.depositAVAX{value: MAX_AMT}();
+
+		rialto.processMinipoolStart(mp.nodeID);
+
+		skip(duration / 2);
+
+		// Give rialto the rewards it needs
+		uint256 rewards = 10 ether;
+		deal(address(rialto), address(rialto).balance + rewards);
+
+		// Pay out the rewards and cycle
+		vm.prank(address(rialto));
+		minipoolMgr.recordStakingEndThenMaybeCycle{value: validationAmt + rewards}(mp.nodeID, block.timestamp, rewards);
+
+		MinipoolManager.Minipool memory mpCompounded = minipoolMgr.getMinipoolByNodeID(mp.nodeID);
+
+		uint256 evenSplitAmt = depositAmt + rewards / 2;
+
+		assertEq(mpCompounded.avaxNodeOpAmt, evenSplitAmt);
+		assertEq(mpCompounded.avaxNodeOpRewardAmt, 0);
+
+		assertEq(mpCompounded.avaxLiquidStakerAmt, evenSplitAmt);
+		assertEq(mpCompounded.avaxLiquidStakerRewardAmt, 0);
+	}
+
 	function testBondZeroGGP() public {
 		vm.startPrank(nodeOp);
 		address nodeID = randAddress();

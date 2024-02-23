@@ -438,7 +438,9 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 		setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".avaxTotalRewardAmt")), avaxTotalRewardAmt);
 
 		// Calculate rewards splits (these will all be zero if no rewards were recvd)
-		// TODO Revisit this logic if we ever allow unequal matched funds
+		// NOTE: Commission fee amount fails to persist for Node Operators across cycling minipools.
+		//       Currently, setting MinipoolNodeCommissionFeePct to 0 (as of 2/23/2024) avoids the issue,
+		//       ensuring a 50/50 reward split. Revisit this logic if we want to reinstate a commission fee
 		uint256 avaxHalfRewards = avaxTotalRewardAmt / 2;
 
 		// Node operators recv an additional commission fee
