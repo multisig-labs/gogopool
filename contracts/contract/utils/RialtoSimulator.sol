@@ -95,6 +95,27 @@ contract RialtoSimulator {
 		return mp;
 	}
 
+	function processErroredMinipoolEndWithRewards(address nodeID) public returns (MinipoolManager.Minipool memory) {
+		MinipoolManager.Minipool memory mp = minipoolMgr.getMinipoolByNodeID(nodeID);
+		uint256 totalAvax = mp.avaxNodeOpAmt + mp.avaxLiquidStakerAmt;
+		// Rialto queries Avalanche node to verify that validation period was successful
+		uint256 rewards = minipoolMgr.getExpectedAVAXRewardsAmt(mp.duration, totalAvax);
+		// Send the funds plus rewards back to MinipoolManager
+		minipoolMgr.recordStakingEnd{value: totalAvax + rewards}(mp.nodeID, block.timestamp, rewards);
+		mp = minipoolMgr.getMinipoolByNodeID(mp.nodeID);
+		return mp;
+	}
+
+	function processErroredMinipoolEndWithoutRewards(address nodeID) public returns (MinipoolManager.Minipool memory) {
+		MinipoolManager.Minipool memory mp = minipoolMgr.getMinipoolByNodeID(nodeID);
+		uint256 totalAvax = mp.avaxNodeOpAmt + mp.avaxLiquidStakerAmt;
+		uint256 rewards = 0;
+		// Send the funds plus NO rewards back to MinipoolManager
+		minipoolMgr.recordStakingEnd{value: totalAvax + rewards}(mp.nodeID, block.timestamp, rewards);
+		mp = minipoolMgr.getMinipoolByNodeID(mp.nodeID);
+		return mp;
+	}
+
 	//  Every dao.getRewardsCycleSeconds(), this loop runs which distributes GGP rewards to eligible stakers
 	function processGGPRewards() public {
 		rewardsPool.startRewardsCycle();
