@@ -46,8 +46,8 @@ contract ClaimNodeOpTest is BaseTest {
 		createAndStartMinipool(1000 ether, 1000 ether, 2 weeks);
 		vm.stopPrank();
 
-		address nodeOp3 = getActorWithTokens("nodeOp2", MAX_AMT, MAX_AMT);
-		vm.startPrank(nodeOp2);
+		address nodeOp3 = getActorWithTokens("nodeOp3", MAX_AMT, MAX_AMT);
+		vm.startPrank(nodeOp3);
 		ggp.approve(address(staking), MAX_AMT);
 		staking.stakeGGP(100 ether);
 		// do not start
@@ -87,6 +87,96 @@ contract ClaimNodeOpTest is BaseTest {
 		vm.startPrank(address(rialto));
 		vm.expectRevert(ClaimNodeOp.RewardsCycleNotStarted.selector);
 		nopClaim.calculateAndDistributeRewards(nodeOp, ggpAmt);
+	}
+
+	function testWhatStatusesNeedMinCollatRatio() public {
+		skip(dao.getRewardsCycleSeconds());
+		rewardsPool.startRewardsCycle();
+		skip(1 weeks);
+
+		//node op 1
+		address nodeOp1 = getActorWithTokens("nodeOp1", MAX_AMT, MAX_AMT);
+		vm.startPrank(nodeOp1);
+		ggAVAX.depositAVAX{value: 2000 ether}();
+		ggp.approve(address(staking), MAX_AMT);
+		staking.stakeGGP(100 ether);
+		MinipoolManager.Minipool memory mp1 = createMinipool(1000 ether, 1000 ether, 2 weeks);
+		rialto.processMinipoolStart(mp1.nodeID);
+		vm.stopPrank();
+
+		// node op 2
+		address nodeOp2 = getActorWithTokens("nodeOp2", MAX_AMT, MAX_AMT);
+		vm.startPrank(nodeOp2);
+		ggAVAX.depositAVAX{value: 2000 ether}();
+		ggp.approve(address(staking), MAX_AMT);
+		staking.stakeGGP(100 ether);
+		MinipoolManager.Minipool memory mp2 = createMinipool(1000 ether, 1000 ether, 2 weeks);
+		rialto.processMinipoolStart(mp2.nodeID);
+		vm.stopPrank();
+
+		// node op 3
+		address nodeOp3 = getActorWithTokens("nodeOp3", MAX_AMT, MAX_AMT);
+		vm.startPrank(nodeOp3);
+		ggAVAX.depositAVAX{value: 2000 ether}();
+		ggp.approve(address(staking), MAX_AMT);
+		staking.stakeGGP(100 ether);
+		MinipoolManager.Minipool memory mp3 = createMinipool(1000 ether, 1000 ether, 2 weeks);
+		rialto.processMinipoolStart(mp3.nodeID);
+
+		skip(2 weeks);
+		vm.stopPrank();
+
+		vm.startPrank(address(rialto));
+		rialto.processMinipoolEndWithRewards(mp1.nodeID);
+		rialto.processMinipoolEndWithRewards(mp2.nodeID);
+		vm.stopPrank();
+
+		vm.startPrank(address(guardian));
+		int256 stakerIndex = staking.getIndexOf(address(nodeOp3));
+		store.setUint(keccak256(abi.encodePacked("staker.item", stakerIndex, ".ggpStaked")), 90 ether);
+		vm.stopPrank();
+
+		// NodeOp1 withdraw the minipool
+		//Note: ggp still staked
+		vm.startPrank(nodeOp1);
+		minipoolMgr.withdrawMinipoolFunds(mp1.nodeID);
+		MinipoolManager.Minipool memory updatedMp1 = minipoolMgr.getMinipoolByNodeID(mp1.nodeID);
+		assertEq(updatedMp1.status, 4); // finished status
+		vm.stopPrank();
+
+		// NodeOp2 withdraw the minipool
+		//Note: ggp NOT staked
+		vm.startPrank(nodeOp2);
+		minipoolMgr.withdrawMinipoolFunds(mp2.nodeID);
+		MinipoolManager.Minipool memory updatedMp2 = minipoolMgr.getMinipoolByNodeID(mp2.nodeID);
+		assertEq(updatedMp2.status, 4); // finished status
+		staking.withdrawGGP(10 ether);
+		vm.stopPrank();
+
+		// NodeOp3 stays in Staking!
+		//Note: GGP dropped below 10%
+		assertEq(staking.getCollateralizationRatio(address(nodeOp3)), 0.09 ether);
+		MinipoolManager.Minipool memory updatedMp3 = minipoolMgr.getMinipoolByNodeID(mp3.nodeID);
+		assertEq(updatedMp3.status, 2); // staking status
+
+		skip(1 weeks);
+		vm.startPrank(address(rialto));
+		rewardsPool.startRewardsCycle();
+		assertTrue(nopClaim.isEligible(nodeOp1));
+		assertTrue(nopClaim.isEligible(nodeOp2));
+		assertTrue(nopClaim.isEligible(nodeOp3)); // IS STILL ELIGIBLE!!
+
+		assertEq(staking.getCollateralizationRatio(address(nodeOp1)), type(uint256).max);
+		assertEq(staking.getCollateralizationRatio(address(nodeOp2)), type(uint256).max);
+
+		nopClaim.calculateAndDistributeRewards(nodeOp1, 200 ether);
+		nopClaim.calculateAndDistributeRewards(nodeOp2, 200 ether);
+		nopClaim.calculateAndDistributeRewards(nodeOp3, 200 ether);
+		assertEq(staking.getGGPRewards(nodeOp1), (nopClaim.getRewardsCycleTotal() / 2));
+		assertGt(staking.getGGPRewards(nodeOp2), 0);
+		assertEq(staking.getGGPRewards(nodeOp3), 0);
+
+		vm.stopPrank();
 	}
 
 	function testCalculateAndDistributeRewards() public {

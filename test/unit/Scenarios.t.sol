@@ -554,4 +554,87 @@ contract ScenariosTest is BaseTest {
 
 		assertGt(nopClaim.getRewardsCycleTotal(), previousRewardsTotal);
 	}
+
+	// minipool in withdrawable state will still get rewarded, even if they are under the 10% collat ratio
+	function testGGPRewardsForWithdrawableMinipoolsUnderCollat() public {
+		uint256 duration = dao.getRewardsEligibilityMinSeconds();
+		uint256 depositAmt = dao.getMinipoolMinAVAXAssignment();
+		uint256 ggpStakeAmt = depositAmt.mulWadDown(dao.getMinCollateralizationRatio());
+
+		vm.startPrank(nodeOp1);
+		ggp.approve(address(staking), ggpStakeAmt);
+		staking.stakeGGP(ggpStakeAmt);
+		MinipoolManager.Minipool memory mp1 = createAndStartMinipool(depositAmt, depositAmt, duration);
+		vm.stopPrank();
+
+		skip(dao.getRewardsEligibilityMinSeconds());
+
+		mp1 = rialto.processMinipoolEndWithRewards(mp1.nodeID);
+
+		// check the status
+		MinipoolManager.Minipool memory mp2 = minipoolMgr.getMinipoolByNodeID(mp1.nodeID);
+		assertEq(mp2.status, uint256(MinipoolStatus.Withdrawable));
+
+		// unstake some GGP to get under 10% collat
+		vm.startPrank(nodeOp1);
+		staking.withdrawGGP((ggpStakeAmt / 2));
+		assertEq(staking.getGGPStake(nodeOp1), ggpStakeAmt / 2);
+		assertEq(staking.getCollateralizationRatio(nodeOp1), type(uint256).max);
+		assertLt(staking.getEffectiveRewardsRatio(nodeOp1), dao.getMinCollateralizationRatio());
+
+		// fwd in time to  the rewards cycle
+		skip(dao.getRewardsCycleSeconds() - (block.timestamp - rewardsPool.getRewardsCycleStartTime()));
+
+		// they should get rewarded for their first minipool only
+		assertEq(staking.getAVAXValidatingHighWater(address(nodeOp1)), depositAmt);
+		assertTrue(nopClaim.isEligible(address(nodeOp1)));
+		assertTrue(rewardsPool.canStartRewardsCycle());
+
+		rialto.processGGPRewards();
+
+		assertEq(staking.getGGPRewards(address(nodeOp1)), nopClaim.getRewardsCycleTotal());
+	}
+
+	// minipool in finished state will still get rewarded, even if they are under the 10% collat ratio
+	function testGGPRewardsForFinishedMinipoolsUnderCollat() public {
+		uint256 duration = dao.getRewardsEligibilityMinSeconds();
+		uint256 depositAmt = dao.getMinipoolMinAVAXAssignment();
+		uint256 ggpStakeAmt = depositAmt.mulWadDown(dao.getMinCollateralizationRatio());
+
+		vm.startPrank(nodeOp1);
+		ggp.approve(address(staking), ggpStakeAmt);
+		staking.stakeGGP(ggpStakeAmt);
+		MinipoolManager.Minipool memory mp1 = createAndStartMinipool(depositAmt, depositAmt, duration);
+		vm.stopPrank();
+
+		skip(dao.getRewardsEligibilityMinSeconds());
+
+		mp1 = rialto.processMinipoolEndWithRewards(mp1.nodeID);
+
+		// check the status
+		uint256 nodeOp1PriorBalance = nodeOp1.balance;
+		vm.startPrank(nodeOp1);
+		minipoolMgr.withdrawMinipoolFunds(mp1.nodeID);
+		assertEq((nodeOp1.balance - nodeOp1PriorBalance), mp1.avaxNodeOpAmt + mp1.avaxNodeOpRewardAmt);
+		MinipoolManager.Minipool memory mp2 = minipoolMgr.getMinipoolByNodeID(mp1.nodeID);
+		assertEq(mp2.status, uint256(MinipoolStatus.Finished));
+
+		// unstake some GGP to get under 10% collat
+		staking.withdrawGGP((ggpStakeAmt / 2));
+		assertEq(staking.getGGPStake(nodeOp1), ggpStakeAmt / 2);
+		assertEq(staking.getCollateralizationRatio(nodeOp1), type(uint256).max);
+		assertLt(staking.getEffectiveRewardsRatio(nodeOp1), dao.getMinCollateralizationRatio());
+
+		// fwd in time to  the rewards cycle
+		skip(dao.getRewardsCycleSeconds() - (block.timestamp - rewardsPool.getRewardsCycleStartTime()));
+
+		// they should get rewarded for their first minipool only
+		assertEq(staking.getAVAXValidatingHighWater(address(nodeOp1)), depositAmt);
+		assertTrue(nopClaim.isEligible(address(nodeOp1)));
+		assertTrue(rewardsPool.canStartRewardsCycle());
+
+		rialto.processGGPRewards();
+
+		assertEq(staking.getGGPRewards(address(nodeOp1)), nopClaim.getRewardsCycleTotal());
+	}
 }
