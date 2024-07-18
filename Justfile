@@ -192,3 +192,10 @@ cloc:
 # Check if there is an http(s) server listening on [url]
 _ping url:
 	@if ! curl -k --silent --connect-timeout 2 {{url}} >/dev/null 2>&1; then echo 'No server at {{url}}!' && exit 1; fi
+
+# add liquidity to the trader joe pool
+add-liquidity *FLAGS: (_ping ETH_RPC_URL)
+	forge script \
+	{{FLAGS}} \
+	--fork-url=${ETH_RPC_URL} \
+	script/add-liquidity.s.sol
