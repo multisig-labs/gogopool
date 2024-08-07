@@ -10,8 +10,6 @@ import {Staking} from "../contracts/contract/Staking.sol";
 
 contract ChangeMinipool is Script, EnvironmentConfig {
 	function run() external {
-		uint256 amount = 5 ether;
-
 		loadAddresses();
 		loadUsers();
 
@@ -20,8 +18,6 @@ contract ChangeMinipool is Script, EnvironmentConfig {
 		vm.startBroadcast(deployer);
 
 		Storage store = Storage(getAddress("Storage"));
-		MinipoolManager minipoolMgr = MinipoolManager(getAddress("MinipoolManager"));
-		// Staking staking = Staking(getAddress("Staking"));
 
 		// address addr = address(0x5f019902149844fe8041d9c5627f61a67763294c);
 		// Staking.Staker memory person = staking.getStaker(addr);

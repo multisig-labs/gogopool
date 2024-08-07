@@ -37,6 +37,7 @@ import {SafeTransferLib} from "@rari-capital/solmate/src/utils/SafeTransferLib.s
 	minipool.item<index>.avaxLiquidStakerAmt = avax deposited by users and assigned to this nodeID
 	minipool.item<index>.creationTime = actual time the minipool was created
 	minipool.item<index>.blsPubkeyAndSig = pub key [48 bytes] + sig [96 bytes]
+	minipool.item<index>.hardwareProvider = enum representing the hardware provider
 
 	// Submitted by the Rialto oracle
 	minipool.item<index>.txID = transaction id of the AddValidatorTx
@@ -82,6 +83,7 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 	event WithdrawForDelegation(address indexed nodeID, uint256 amount);
 	event DepositFromDelegation(address indexed nodeID, uint256 amount, uint256 rewardsAmount);
 	event BLSKeysAdded(address indexed nodeID, bytes blsPubkeyAndSig);
+	event MinipoolLaunched(address indexed nodeID, bytes32 hardwareProvider, uint256 duration);
 
 	/// @dev Not used for storage, just for returning data from view functions
 	struct Minipool {
@@ -108,6 +110,7 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 		uint256 ggpSlashAmt;
 		uint256 avaxNodeOpRewardAmt;
 		uint256 avaxLiquidStakerRewardAmt;
+		bytes32 hardwareProvider;
 	}
 
 	uint256 public minStakingDuration;
@@ -116,6 +119,7 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 		version = 1;
 	}
 
+	/// @notice Payable function to receive funds from the vault
 	function receiveWithdrawalAVAX() external payable {}
 
 	//
@@ -201,9 +205,18 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 		uint256 duration,
 		uint256 delegationFee,
 		uint256 avaxAssignmentRequest,
-		bytes calldata blsPubkeyAndSig
+		bytes calldata blsPubkeyAndSig,
+		bytes32 hardwareProvider
 	) public payable whenNotPaused {
-		this.createMinipoolOnBehalfOf{value: msg.value}(msg.sender, nodeID, duration, delegationFee, avaxAssignmentRequest, blsPubkeyAndSig);
+		this.createMinipoolOnBehalfOf{value: msg.value}(
+			msg.sender,
+			nodeID,
+			duration,
+			delegationFee,
+			avaxAssignmentRequest,
+			blsPubkeyAndSig,
+			hardwareProvider
+		);
 	}
 
 	/// @notice Accept AVAX deposit from node operator to create a Minipool. Node Operator must be staking GGP. Open to public.
@@ -218,7 +231,8 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 		uint256 duration,
 		uint256 delegationFee,
 		uint256 avaxAssignmentRequest,
-		bytes calldata blsPubkeyAndSig
+		bytes calldata blsPubkeyAndSig,
+		bytes32 hardwareProvider
 	) external payable whenNotPaused {
 		if (nodeID == address(0)) {
 			revert InvalidNodeID();
@@ -254,14 +268,12 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 			staking.setRewardsStartTime(owner, block.timestamp);
 		}
 
-		uint256 ratio = staking.getCollateralizationRatio(owner);
-		if (ratio < dao.getMinCollateralizationRatio()) {
+		if (staking.getCollateralizationRatio(owner) < dao.getMinCollateralizationRatio()) {
 			revert InsufficientGGPCollateralization();
 		}
 
 		// Get a Rialto multisig to assign for this minipool
-		MultisigManager multisigManager = MultisigManager(getContractAddress("MultisigManager"));
-		address multisig = multisigManager.requireNextActiveMultisig();
+		address multisig = MultisigManager(getContractAddress("MultisigManager")).requireNextActiveMultisig();
 
 		// Create or update a minipool record for nodeID
 		// If nodeID exists, only allow overwriting if node is finished or canceled
@@ -278,7 +290,7 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 			addUint(keccak256("minipool.count"), 1);
 		}
 
-		// Save the attrs individually in the k/v store
+		// Save attributes to the k/v store
 		setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".status")), uint256(MinipoolStatus.Prelaunch));
 		setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".duration")), duration);
 		setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".delegationFee")), delegationFee);
@@ -289,6 +301,7 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 		setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".avaxLiquidStakerAmt")), avaxAssignmentRequest);
 		setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".creationTime")), block.timestamp);
 		setBytes(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".blsPubkeyAndSig")), blsPubkeyAndSig);
+		setBytes32(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".hardwareProvider")), hardwareProvider);
 		setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".initialStartTime")), 0);
 		setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".ggpSlashAmt")), 0);
 
@@ -304,7 +317,7 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 		ProtocolDAO dao = ProtocolDAO(getContractAddress("ProtocolDAO"));
 		int256 index = requireValidMinipool(nodeID);
 		onlyOwner(index);
-		// make sure the minipool meets the wait period requirement
+		// Make sure the minipool meets the wait period requirement
 		uint256 creationTime = getUint(keccak256(abi.encodePacked("minipool.item", index, ".creationTime")));
 		if (block.timestamp - creationTime < dao.getMinipoolCancelMoratoriumSeconds()) {
 			revert CancellationTooEarly();
@@ -333,14 +346,13 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 	}
 
 	/// @notice Withdraw function for a Node Operator to claim all AVAX funds they are due (original AVAX staked, plus any AVAX rewards)
+	/// @dev 	Check that the owner is sending the transaction before calling this method
+	///  			Check that the minipool index, owner, and nodeID all align
 	/// @param nodeID 20-byte Avalanche node ID the Node Operator registered with
 	/// @param minipoolIndex index representing the minipool
 	/// @param owner the c-chain address that owns the minipool
 	/// @return totalAvaxAmt The total amount of AVAX related to this minipool owed to the owner
 	function _withdrawMinipoolFunds(address nodeID, int256 minipoolIndex, address owner) internal nonReentrant returns (uint256 totalAvaxAmt) {
-		// NOTE: check that the owner is sending the transaction before calling this method
-		// NOTE: check that the minipool index, the owner and the nodeID all align.
-
 		requireValidStateTransition(minipoolIndex, MinipoolStatus.Finished);
 		setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".status")), uint256(MinipoolStatus.Finished));
 
@@ -360,20 +372,26 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 	/// @notice Rewards are are transfered to the minipool owner and the minipool is re-launched with the original principle
 	/// @param nodeID 20-byte Avalanche node ID the Node Operator registered with
 	/// @param duration Requested validation period in seconds
-	function withdrawRewardsAndRelaunchMinipool(address nodeID, uint256 duration) public whenNotPaused {
-		ProtocolDAO dao = ProtocolDAO(getContractAddress("ProtocolDAO"));
-		if (!dao.hasRole("Relauncher", msg.sender)) {
+	function withdrawRewardsAndRelaunchMinipool(address nodeID, uint256 duration, bytes32 hardwareProvider) public whenNotPaused {
+		if (!ProtocolDAO(getContractAddress("ProtocolDAO")).hasRole("Relauncher", msg.sender)) {
 			revert OnlyRole();
 		}
+
 		int256 minipoolIndex = requireValidMinipool(nodeID);
 		address owner = getAddress(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".owner")));
 		uint256 totalAvaxAmt = _withdrawMinipoolFunds(nodeID, minipoolIndex, owner);
-		bytes memory blsPubkeyAndSig = getBytes(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".blsPubkeyAndSig")));
 		uint256 minipoolBase = getUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".avaxNodeOpInitialAmt")));
-		uint256 rewardedAmount = totalAvaxAmt - minipoolBase;
 
-		this.createMinipoolOnBehalfOf{value: minipoolBase}(owner, nodeID, duration, 20_000, minipoolBase, blsPubkeyAndSig);
-		owner.safeTransferETH(rewardedAmount);
+		this.createMinipoolOnBehalfOf{value: minipoolBase}(
+			owner,
+			nodeID,
+			duration,
+			20_000,
+			minipoolBase,
+			getBytes(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".blsPubkeyAndSig"))),
+			hardwareProvider
+		);
+		owner.safeTransferETH(totalAvaxAmt - minipoolBase);
 	}
 
 	//
@@ -426,7 +444,15 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 		addUint(keccak256("MinipoolManager.TotalAVAXLiquidStakerAmt"), avaxLiquidStakerAmt);
 
 		setUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".status")), uint256(MinipoolStatus.Launched));
+
 		emit MinipoolStatusChanged(nodeID, MinipoolStatus.Launched);
+
+		// This should be called once per minipool start, not on every cycle
+		if (!isCycling) {
+			bytes32 hardwareProvider = getBytes32(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".hardwareProvider")));
+			uint256 duration = getUint(keccak256(abi.encodePacked("minipool.item", minipoolIndex, ".duration")));
+			emit MinipoolLaunched(nodeID, hardwareProvider, duration);
+		}
 
 		Vault vault = Vault(getContractAddress("Vault"));
 		vault.withdrawAVAX(avaxNodeOpAmt);
@@ -739,6 +765,7 @@ contract MinipoolManager is Base, ReentrancyGuard, IWithdrawer {
 		mp.avaxNodeOpRewardAmt = getUint(keccak256(abi.encodePacked("minipool.item", index, ".avaxNodeOpRewardAmt")));
 		mp.avaxLiquidStakerRewardAmt = getUint(keccak256(abi.encodePacked("minipool.item", index, ".avaxLiquidStakerRewardAmt")));
 		mp.ggpSlashAmt = getUint(keccak256(abi.encodePacked("minipool.item", index, ".ggpSlashAmt")));
+		mp.hardwareProvider = getBytes32(keccak256(abi.encodePacked("minipool.item", index, ".hardwareProvider")));
 	}
 
 	/// @notice Get minipools in a certain status (limit=0 means no pagination)

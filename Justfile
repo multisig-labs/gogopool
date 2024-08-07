@@ -94,10 +94,10 @@ task *cmd:
 	npx hardhat {{cmd}}
 
 # Execute a Forge script
-forge-script cmd:
+forge-script cmd *FLAGS:
 	#!/usr/bin/env bash
 	fn={{cmd}}
-	forge script --broadcast --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} script/${fn%.*.*}.s.sol
+	forge script {{FLAGS}} --slow --ffi --fork-url=${ETH_RPC_URL} --private-key=${PRIVATE_KEY} script/${fn%.*.*}.s.sol
 
 # Run forge unit tests
 test contract="." test="." *flags="":

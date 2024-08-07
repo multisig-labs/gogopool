@@ -1,35 +1,52 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pragma solidity ^0.8.17;
 
-import {Base} from "./Base.sol";
+import {BaseUpgradeable} from "./BaseUpgradeable.sol";
 import {IERC20} from "../interface/IERC20.sol";
 import {ILBRouter} from "../interface/ILBRouter.sol";
 import {IWAVAX} from "../interface/IWAVAX.sol";
 import {IWithdrawer} from "../interface/IWithdrawer.sol";
-import {IGoGoPoolHardwareProvider} from "../interface/IGoGoPoolHardwareProvider.sol";
+import {IHardwareProvider} from "../interface/IHardwareProvider.sol";
 import {MinipoolManager} from "./MinipoolManager.sol";
-import {ProtocolDAO} from "./ProtocolDAO.sol";
 import {Staking} from "./Staking.sol";
 import {Storage} from "./Storage.sol";
 import {TokenGGP} from "./tokens/TokenGGP.sol";
 
-contract MinipoolStreamliner is Base, IWithdrawer {
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+
+import {SafeTransferLib} from "@rari-capital/solmate/src/utils/SafeTransferLib.sol";
+
+contract MinipoolStreamliner is IWithdrawer, Initializable, BaseUpgradeable {
+	using SafeTransferLib for TokenGGP;
+
 	error MismatchedFunds();
 	error SwapFailed();
 	error OnlyOwner();
-	error NotApprovedHardwareProvider();
-	event NewStreamlinedMinipoolMade(address nodeID, address owner, address hardwareProviderContract);
-	event MinipoolRelaunched(address nodeID, address owner, address hardwareProviderContract);
+	error InvalidHardwareProvider(bytes32 providerName);
+
+	event NewStreamlinedMinipoolMade(address nodeID, address owner, bytes32 hardwareProvider, uint256 avaxForNodeRental, uint256 duration);
+	event MinipoolRelaunched(address nodeID, address owner, bytes32 hardwareProvider, uint256 avaxForNodeRental, uint256 duration);
 
 	address internal WAVAX_ADDR;
 	address internal JOE_LB_ROUTER;
 
-	constructor(Storage storageAddress, address WAVAX, address TJRouter) Base(storageAddress) {
-		version = 1;
-		WAVAX_ADDR = WAVAX;
-		JOE_LB_ROUTER = TJRouter;
+	mapping(bytes32 => address) public approvedHardwareProviders;
+
+	/// @notice Prevents initialization if contract is constructed
+	/// @custom:oz-upgrades-unsafe-allow constructor
+	constructor() {
+		_disableInitializers();
 	}
 
+	/// @notice Called on creation to initialize MinipoolStreamliner
+	function initialize(Storage storageAddress, address wavax, address tjRouter) public initializer {
+		__BaseUpgradeable_init(storageAddress);
+		version = 1;
+		WAVAX_ADDR = wavax;
+		JOE_LB_ROUTER = tjRouter;
+	}
+
+	/// @notice Payable function to receive funds from the vault
 	function receiveWithdrawalAVAX() external payable {}
 
 	struct StreamlinedMinipool {
@@ -40,53 +57,74 @@ contract MinipoolStreamliner is Base, IWithdrawer {
 		uint256 avaxForGGP;
 		uint256 minGGPAmountOut;
 		uint256 avaxForNodeRental;
-		address hardwareProviderContract;
-		bytes hardwareProviderInformation;
+		uint256 ggpStakeAmount;
+		bytes32 hardwareProvider;
 	}
 
-	/// @notice new entry point for all minipools - new or being relaunched.
-	/// The user can bring their own nodeID or rent a node from a hardware provider.
+	/// @notice New entry point for all minipools - new or being relaunched.
+	///         The user can bring their own nodeID or rent a node from a hardware provider.
 	/// @param newMinipool struct containing all information necessary to create or relaunch a minipool
 	function createOrRelaunchStreamlinedMinipool(StreamlinedMinipool memory newMinipool) external payable {
-		// verify there is enough avax being transferred
+		// Verify AVAX amount
 		if (msg.value != (newMinipool.avaxForMinipool + newMinipool.avaxForGGP + newMinipool.avaxForNodeRental)) {
 			revert MismatchedFunds();
 		}
 
-		// swap and stake ggp for the user if needed
+		// Swap AVAX -> GGP and stake
 		if (newMinipool.avaxForGGP > 0) {
 			this.swapAndStakeGGPOnBehalfOf{value: newMinipool.avaxForGGP}(msg.sender, newMinipool.avaxForGGP, newMinipool.minGGPAmountOut);
 		}
 
-		// rent hardware for the user if needed
-		if (newMinipool.hardwareProviderContract != address(0) && isApprovedHardwareProvider(newMinipool.hardwareProviderContract)) {
-			IGoGoPoolHardwareProvider hardwareProvider = IGoGoPoolHardwareProvider(newMinipool.hardwareProviderContract);
-			(newMinipool.nodeID, newMinipool.blsPubkeyAndSig) = hardwareProvider.rentHardware{value: newMinipool.avaxForNodeRental}(
-				msg.sender,
-				newMinipool
-			);
-			// hardware provider is responsibe for sending back any unused tokens from the swap to the user
+		// Stake GGP on behalf of user
+		if (newMinipool.ggpStakeAmount > 0) {
+			TokenGGP ggp = TokenGGP(getContractAddress("TokenGGP"));
+			Staking staking = Staking(getContractAddress("Staking"));
+			ggp.safeTransferFrom(msg.sender, address(this), newMinipool.ggpStakeAmount);
+			ggp.approve(address(staking), newMinipool.ggpStakeAmount);
+			staking.stakeGGPOnBehalfOf(msg.sender, newMinipool.ggpStakeAmount);
 		}
+
+		// Rent hardware from provider
+		address hardwareProviderContract = approvedHardwareProviders[newMinipool.hardwareProvider];
+
+		if (hardwareProviderContract == address(0x0) && newMinipool.avaxForNodeRental > 0) {
+			revert InvalidHardwareProvider(newMinipool.hardwareProvider);
+		}
+
+		if (hardwareProviderContract != address(0x0)) {
+			IHardwareProvider(hardwareProviderContract).rentHardware{value: newMinipool.avaxForNodeRental}(
+				msg.sender,
+				newMinipool.nodeID,
+				newMinipool.duration
+			);
+		}
+
 		MinipoolManager minipoolMgr = MinipoolManager(getContractAddress("MinipoolManager"));
 
 		if (newMinipool.avaxForMinipool > 0) {
-			// create minipool for user
 			minipoolMgr.createMinipoolOnBehalfOf{value: newMinipool.avaxForMinipool}(
 				msg.sender,
 				newMinipool.nodeID,
 				newMinipool.duration,
 				20_000,
 				newMinipool.avaxForMinipool,
-				newMinipool.blsPubkeyAndSig
+				newMinipool.blsPubkeyAndSig,
+				newMinipool.hardwareProvider
 			);
-			emit NewStreamlinedMinipoolMade(newMinipool.nodeID, msg.sender, newMinipool.hardwareProviderContract);
+			emit NewStreamlinedMinipoolMade(
+				newMinipool.nodeID,
+				msg.sender,
+				newMinipool.hardwareProvider,
+				newMinipool.avaxForNodeRental,
+				newMinipool.duration
+			);
 		} else {
-			// verify that the sender is the owner of the minipool
+			// Verify sender and recreate minipool
 			int256 minipoolIndex = minipoolMgr.requireValidMinipool(newMinipool.nodeID);
 			onlyOwner(minipoolIndex);
 
-			minipoolMgr.withdrawRewardsAndRelaunchMinipool(newMinipool.nodeID, newMinipool.duration);
-			emit MinipoolRelaunched(newMinipool.nodeID, msg.sender, newMinipool.hardwareProviderContract);
+			minipoolMgr.withdrawRewardsAndRelaunchMinipool(newMinipool.nodeID, newMinipool.duration, newMinipool.hardwareProvider);
+			emit MinipoolRelaunched(newMinipool.nodeID, msg.sender, newMinipool.hardwareProvider, newMinipool.avaxForNodeRental, newMinipool.duration);
 		}
 	}
 
@@ -101,18 +139,7 @@ contract MinipoolStreamliner is Base, IWithdrawer {
 		return owner;
 	}
 
-	/// @notice Verifies if a contract is an approved partner
-	/// @param contractAddress The address of the contract to verify
-	/// @return bool True if the contract is an approved partner
-	function isApprovedHardwareProvider(address contractAddress) public view returns (bool) {
-		ProtocolDAO dao = ProtocolDAO(getContractAddress("ProtocolDAO"));
-		if (!dao.hasRole("HWProvider", contractAddress)) {
-			revert NotApprovedHardwareProvider();
-		}
-		return true;
-	}
-
-	/// @notice Swaps AVAX  for GGP
+	/// @notice Swaps AVAX for GGP
 	/// @dev The tokens stay in this contract.
 	/// @param avaxForToken The amount of avax the user has sent to be swapped for the desired token
 	/// @param minTokenOut Minimum amount of the token amount that is expected from the swap - best calcualted off chain
@@ -166,5 +193,18 @@ contract MinipoolStreamliner is Base, IWithdrawer {
 		staking.stakeGGPOnBehalfOf(user, ggpPurchased);
 
 		return ggpPurchased;
+	}
+
+	/// @notice Add an approved hardware provider with contract address
+	/// @param providerName Bytes32 name of the hardware provider
+	/// @param providerContract Hardware Provider contract address
+	function addHardwareProvider(bytes32 providerName, address providerContract) external onlyGuardian {
+		approvedHardwareProviders[providerName] = providerContract;
+	}
+
+	/// @notice Remove an approved hardware provider
+	/// @param providerName Name of the hardware provider
+	function removeHardwareProvider(bytes32 providerName) external onlyGuardian {
+		approvedHardwareProviders[providerName] = address(0x0);
 	}
 }

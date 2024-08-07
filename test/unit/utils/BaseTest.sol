@@ -26,7 +26,6 @@ import {RialtoSimulator} from "../../../contracts/contract/utils/RialtoSimulator
 import {format} from "sol-utils/format.sol";
 import {ERC20} from "@rari-capital/solmate/src/tokens/ERC20.sol";
 import {FixedPointMathLib} from "@rari-capital/solmate/src/utils/FixedPointMathLib.sol";
-import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
@@ -267,11 +266,13 @@ abstract contract BaseTest is Test {
 		bytes
 			memory sig = hex"b8c820f854116b4916f64434732f9155cc4f2f8f31580b1cc8d831d5969dbda834f12c5028c7b17355d67ce6437616a60e67d7809699b99ddae7d91950547a3807a569d0f6fbcc9ec85e0ec3cb908d2d3d1d5ebd8f04424fe0dd9ff7b792e465";
 		bytes memory blsPubkeyAndSig = abi.encodePacked(pubkey, sig);
+		bytes32 hardwareProvider = keccak256(abi.encodePacked("provider"));
 
 		address nodeID = randAddress();
 		uint256 delegationFee = 20_000;
-		minipoolMgr.createMinipool{value: depositAmt}(nodeID, duration, delegationFee, avaxAssignmentRequest, blsPubkeyAndSig);
+		minipoolMgr.createMinipool{value: depositAmt}(nodeID, duration, delegationFee, avaxAssignmentRequest, blsPubkeyAndSig, hardwareProvider);
 		int256 index = minipoolMgr.getIndexOf(nodeID);
+
 		return minipoolMgr.getMinipool(index);
 	}
 

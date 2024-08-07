@@ -13,7 +13,7 @@ contract DeployContract is Script, EnvironmentConfig {
 		vm.startBroadcast(deployer);
 
 		address ggAVAXAddr = 0xA25EaF2906FA1a3a13EdAc9B9657108Af7B703e3;
-		GGAVAXRateProvider rp = new GGAVAXRateProvider(ggAVAXAddr);
+		new GGAVAXRateProvider(ggAVAXAddr);
 
 		vm.stopBroadcast();
 	}

@@ -1,5 +1,5 @@
-// // SPDX-License-Identifier: UNLICENSED
-// pragma solidity 0.8.17;
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.17;
 
 // import "forge-std/Script.sol";
 // import {EnvironmentConfig} from "./EnvironmentConfig.s.sol";

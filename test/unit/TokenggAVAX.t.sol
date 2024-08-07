@@ -21,6 +21,7 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 		bytes
 			memory sig = hex"b8c820f854116b4916f64434732f9155cc4f2f8f31580b1cc8d831d5969dbda834f12c5028c7b17355d67ce6437616a60e67d7809699b99ddae7d91950547a3807a569d0f6fbcc9ec85e0ec3cb908d2d3d1d5ebd8f04424fe0dd9ff7b792e465";
 		bytes memory blsPubkeyAndSig = abi.encodePacked(pubkey, sig);
+		bytes32 hardwareProvider = keccak256(abi.encodePacked("provider"));
 
 		vm.prank(guardian);
 		store.setUint(keccak256("ProtocolDAO.TargetGGAVAXReserveRate"), 0.1 ether);
@@ -35,7 +36,7 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 		vm.startPrank(alice);
 		ggp.approve(address(staking), 100 ether);
 		staking.stakeGGP(100 ether);
-		minipoolMgr.createMinipool{value: 1000 ether}(nodeID, duration, delegationFee, avaxAssignmentRequest, blsPubkeyAndSig);
+		minipoolMgr.createMinipool{value: 1000 ether}(nodeID, duration, delegationFee, avaxAssignmentRequest, blsPubkeyAndSig, hardwareProvider);
 		vm.stopPrank();
 	}
 

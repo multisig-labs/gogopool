@@ -8,7 +8,6 @@ import {MinipoolManager} from "../contracts/contract/MinipoolManager.sol";
 import {Staking} from "../contracts/contract/Staking.sol";
 import {Storage} from "../contracts/contract/Storage.sol";
 import {MinipoolStreamliner} from "../contracts/contract/MinipoolStreamliner.sol";
-import {OonodzHardwareProvider} from "../contracts/contract/OonodzHardwareProvider.sol";
 
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
@@ -33,54 +32,34 @@ contract DeployContract is Script, EnvironmentConfig {
 
 		//MAINNET ADDRS
 		address wavaxAddress = 0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7;
-		address usdcAddress = 0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E;
 		address lbRouterAddress = 0xb4315e873dBcf96Ffd0acd8EA43f689D8c20fB30;
-		address oonodzWrapperAddress = 0x769Fc9b5038d8843895b50a904e04b58b0d4a9CB;
-
-		address currentPdao = 0xA008Cc1839024A311ad769e4aC302EE35A8EF546;
-		address currentMinipoolManager = 0xb84fA022c7fE1CE3a1F94C49f2F13236C3d1Ed08;
 
 		vm.startBroadcast(deployer);
 
 		Storage s;
 
 		s = Storage(getAddress("Storage"));
-		// ProtocolDAO oldPdao = ProtocolDAO(address(currentPdao));
 
 		MinipoolManager minipoolManager = new MinipoolManager(s);
 		saveAddress("MinipoolManager", address(minipoolManager));
 
-		MinipoolStreamliner streamlinedMinipool = new MinipoolStreamliner(s, wavaxAddress, lbRouterAddress);
+		ProxyAdmin proxyAdmin = new ProxyAdmin();
+		saveAddress("MinipoolStreamlinerAdmin", address(proxyAdmin));
+
+		MinipoolStreamliner minipoolStreamlinerImpl = new MinipoolStreamliner();
+
+		TransparentUpgradeableProxy minipoolStreamlinerProxy = new TransparentUpgradeableProxy(
+			address(minipoolStreamlinerImpl),
+			address(proxyAdmin),
+			abi.encodeWithSelector(minipoolStreamlinerImpl.initialize.selector, s, wavaxAddress, lbRouterAddress)
+		);
+
+		MinipoolStreamliner streamlinedMinipool = MinipoolStreamliner(payable(minipoolStreamlinerProxy));
 		saveAddress("MinipoolStreamliner", address(streamlinedMinipool));
 
 		ProtocolDAO pdao = new ProtocolDAO(s);
 		saveAddress("ProtocolDAO", address(pdao));
 
-		OonodzHardwareProvider oonodzHWP = new OonodzHardwareProvider(
-			wavaxAddress,
-			usdcAddress,
-			lbRouterAddress,
-			oonodzWrapperAddress,
-			address(streamlinedMinipool)
-		);
-		saveAddress("OonodzHardwareProvider", address(oonodzHWP));
-
-		// register ProtocolDAO
-		// oldPdao.upgradeContract("ProtocolDAO", address(oldPdao), address(pdao));
-
-		// register MinipoolManager
-		// pdao.upgradeContract("MinipoolManager", address(currentMinipoolManager), address(minipoolManager));
-
-		//register mpstream as a role
-		// pdao.setRole("Relauncher", address(streamlinedMinipool), true);
-
-		//register guardian as a role
-		// pdao.setRole("Relauncher", address(guardian), true);
-
-		// register oonodzHW as an approved HW provider
-		// pdao.setRole("HWProvider", address(oonodzHWP), true);
-
 		vm.stopBroadcast();
 	}
-	// Following this: upgrade both minipool manager and staking and then register the OonodzHardwareProvider contract address with oonodz. Make sure FE has correct addresses
 }

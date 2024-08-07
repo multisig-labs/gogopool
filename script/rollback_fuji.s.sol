@@ -8,7 +8,6 @@ import {MinipoolManager} from "../contracts/contract/MinipoolManager.sol";
 import {Staking} from "../contracts/contract/Staking.sol";
 import {Storage} from "../contracts/contract/Storage.sol";
 import {MinipoolStreamliner} from "../contracts/contract/MinipoolStreamliner.sol";
-import {OonodzHardwareProvider} from "../contracts/contract/OonodzHardwareProvider.sol";
 
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
