@@ -192,3 +192,53 @@ cloc:
 # Check if there is an http(s) server listening on [url]
 _ping url:
 	@if ! curl -k --silent --connect-timeout 2 {{url}} >/dev/null 2>&1; then echo 'No server at {{url}}!' && exit 1; fi
+
+get-contracts:
+  #!/bin/zsh
+
+  CONTRACTS=("Oracle.sol/Oracle.json" "Storage.sol/Storage.json" "MinipoolManager.sol/MinipoolManager.json" "tokens/TokenGGP.sol/TokenGGP.json" "tokens/TokenggAVAX.sol/TokenggAVAX.json" "Staking.sol/Staking.json" "utils/OneInchMock.sol/OneInchMock.json" "RewardsPool.sol/RewardsPool.json" "ClaimNodeOp.sol/ClaimNodeOp.json" "ProtocolDAO.sol/ProtocolDAO.json" "MinipoolStreamliner.sol/MinipoolStreamliner.json" "ArtifactHardwareProvider.sol/ArtifactHardwareProvider.json")
+
+  if [[ ! -d "node_modules" ]]; then
+    yarn
+  fi
+  just build
+
+  rm -rf generated
+  mkdir -p generated/contracts
+  mkdir -p generated/addresses
+
+  for contract_path in "${CONTRACTS[@]}"; do
+    CONTRACT_PATH=artifacts/contracts/contract/$contract_path
+    echo $CONTRACT_PATH
+    contract_name=$(basename $contract_path .json)
+    CURRENT_CONTRACT="generated/contracts/$contract_name.ts"
+    
+    cp $CONTRACT_PATH generated/contracts
+    mv generated/contracts/$contract_name.json generated/contracts/$contract_name.ts
+
+    sed -i '' '1,5d' $CURRENT_CONTRACT
+
+    sed -i '' "1i\ 
+    const $contract_name = [" $CURRENT_CONTRACT
+
+    sed -i '' '/"bytecode":/,$d' $CURRENT_CONTRACT
+
+    sed -i '' '$d' $CURRENT_CONTRACT
+
+    sed -i '' '$a\
+    ] as const
+    ' $CURRENT_CONTRACT
+
+    echo "" >> $CURRENT_CONTRACT
+    echo "export default $contract_name" >> $CURRENT_CONTRACT
+  done
+
+  cp deployed/43113-addresses.json generated/addresses/43113.ts
+  sed -i '' '1i\
+  export const FUJI_ADDRESSES: Record<string, `0x${string}`> = ' generated/addresses/43113.ts
+  
+  cp deployed/43114-addresses.json generated/addresses/43114.ts
+  sed -i '' '1i\
+  export const MAINNET_ADDRESSES: Record<string, `0x${string}`> = ' generated/addresses/43114.ts
+
+  npx prettier --write generated/*

@@ -19,6 +19,13 @@
 				"useTabs": false,
 				"tabWidth": 2
 			}
+		},
+		{
+			"files": "*.ts",
+			"options": {
+				"useTabs": false,
+				"tabWidth": 2
+			}
 		}
 	]
 }
