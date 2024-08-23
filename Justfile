@@ -240,5 +240,10 @@ get-contracts:
   cp deployed/43114-addresses.json generated/addresses/43114.ts
   sed -i '' '1i\
   export const MAINNET_ADDRESSES: Record<string, `0x${string}`> = ' generated/addresses/43114.ts
+  npx prettier --write generated/*
 
+get-contracts-and-errors:
+  just get-contracts
+  echo "export const DECODED_ERRORS = " > generated/errors.ts
+  just decoded-errors | sed -n '/^{/,/^}/p' >> generated/errors.ts
   npx prettier --write generated/*

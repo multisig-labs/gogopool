@@ -14,7 +14,10 @@
 			}
 		},
 		{
-			"files": ["*.yaml", "*.yml"],
+			"files": [
+				"*.yaml",
+				"*.yml"
+			],
 			"options": {
 				"useTabs": false,
 				"tabWidth": 2
@@ -24,7 +27,14 @@
 			"files": "*.ts",
 			"options": {
 				"useTabs": false,
-				"tabWidth": 2
+				"tabWidth": 2,
+				"printWidth": 100,
+				"singleQuote": true,
+				"semi": false,
+				"bracketSpacing": true,
+				"trailingComma": "all",
+				"endOfLine": "auto",
+				"quoteProps": "consistent"
 			}
 		}
 	]
