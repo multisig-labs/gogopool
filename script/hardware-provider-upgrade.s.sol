@@ -87,11 +87,29 @@ contract HardwareProviderUpgrades is Script, EnvironmentConfig {
 		// Deploy new MinipoolManager
 		////
 		MinipoolManager newMinipoolManager = new MinipoolManager(s);
-		ProtocolDAO pDao = ProtocolDAO(getAddress("ProtocolDAO"));
-		address oldMinipoolManager = getAddress("MinipoolManager");
 
 		vm.stopBroadcast();
 
+		guardianActions(guardian, deployer, minipoolStreamliner, artifactHardwareProvider, newMinipoolManager);
+
+		saveAddress("ArtifactHardwareProvider", address(artifactHardwareProvider));
+		saveAddress("MinipoolManager", address(newMinipoolManager));
+		saveAddress("MinipoolStreamliner", address(minipoolStreamliner));
+		saveAddress("MinipoolStreamlinerImpl", address(minipoolStreamlinerImpl));
+		saveAddress("MinipoolStreamlinerAdmin", address(proxyAdmin));
+
+		vm.stopPrank();
+	}
+
+	function guardianActions(
+		address guardian,
+		address deployer,
+		MinipoolStreamliner minipoolStreamliner,
+		ArtifactHardwareProvider artifactHardwareProvider,
+		MinipoolManager newMinipoolManager
+	) internal {
+		ProtocolDAO pDao = ProtocolDAO(getAddress("ProtocolDAO"));
+		address oldMinipoolManager = getAddress("MinipoolManager");
 		////
 		// Guardian actions
 		////
@@ -113,13 +131,5 @@ contract HardwareProviderUpgrades is Script, EnvironmentConfig {
 			pDao.setRole("Relauncher", address(minipoolStreamliner), true);
 			vm.stopBroadcast();
 		}
-
-		saveAddress("ArtifactHardwareProvider", address(artifactHardwareProvider));
-		saveAddress("MinipoolManager", address(newMinipoolManager));
-		saveAddress("MinipoolStreamliner", address(minipoolStreamliner));
-		saveAddress("MinipoolStreamlinerImpl", address(minipoolStreamlinerImpl));
-		saveAddress("MinipoolStreamlinerAdmin", address(proxyAdmin));
-
-		vm.stopPrank();
 	}
 }

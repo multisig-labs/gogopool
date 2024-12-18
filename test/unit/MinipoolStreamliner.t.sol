@@ -397,5 +397,6 @@ contract MinipoolStreamlinerTest is BaseTest {
 		rialto.processMinipoolEndWithRewards(minipool.nodeID);
 		minipool = minipoolMgr.getMinipoolByNodeID(nodeId);
 		assertEq(minipool.status, uint8(MinipoolStatus.Withdrawable));
+		vm.stopPrank();
 	}
 }

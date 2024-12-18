@@ -114,7 +114,7 @@ test-watch contract="." test="." *flags="":
 	forge test --allow-failure --block-timestamp `date '+%s'` --match-contract {{contract}} --match-test {{test}} {{flags}} --watch contracts test --watch-delay 1
 
 # Print signatures for all errors found in /artifacts
-decoded-errors: compile
+decoded-errors:
 	#!/usr/bin/env bash
 	join() { local d=$1 s=$2; shift 2 && printf %s "$s${@/#/$d}"; }
 	shopt -s globstar # so /**/ works

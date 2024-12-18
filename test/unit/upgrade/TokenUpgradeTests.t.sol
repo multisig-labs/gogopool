@@ -2,11 +2,11 @@
 
 pragma solidity 0.8.17;
 
-import "./utils/BaseTest.sol";
+import "../utils/BaseTest.sol";
 
-import {MockTokenggAVAXV2} from "./utils/MockTokenggAVAXV2.sol";
-import {MockTokenggAVAXV2Dangerous} from "./utils/MockTokenggAVAXV2Dangerous.sol";
-import {MockTokenggAVAXV2Safe} from "./utils/MockTokenggAVAXV2Safe.sol";
+import {MockTokenggAVAXV2} from "../utils/MockTokenggAVAXV2.sol";
+import {MockTokenggAVAXV2Dangerous} from "../utils/MockTokenggAVAXV2Dangerous.sol";
+import {MockTokenggAVAXV2Safe} from "../utils/MockTokenggAVAXV2Safe.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 contract TokenUpgradeTests is BaseTest {
