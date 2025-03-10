@@ -1162,6 +1162,8 @@ contract MinipoolManagerTest is BaseTest {
 		vm.expectRevert(MinipoolManager.InsufficientGGPCollateralization.selector);
 		minipoolMgr.recordStakingEndThenMaybeCycle{value: totalAVAX + rewards}(mp.nodeID, block.timestamp, rewards);
 		vm.stopPrank();
+
+		//rialto then calls recordStakingEnd() and the minipool is set into withdrawable state
 	}
 
 	function testCycleMinipoolCommission() public {

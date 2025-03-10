@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pragma solidity ^0.8.17;
 
-import {BaseUpgradeable} from "./BaseUpgradeable.sol";
-import {IERC20} from "../interface/IERC20.sol";
-import {ILBRouter} from "../interface/ILBRouter.sol";
-import {IWAVAX} from "../interface/IWAVAX.sol";
-import {IWithdrawer} from "../interface/IWithdrawer.sol";
-import {IHardwareProvider} from "../interface/IHardwareProvider.sol";
-import {MinipoolManager} from "./MinipoolManager.sol";
-import {Staking} from "./Staking.sol";
-import {Storage} from "./Storage.sol";
-import {TokenGGP} from "./tokens/TokenGGP.sol";
+import {BaseUpgradeable} from "../BaseUpgradeable.sol";
+import {IERC20} from "../../interface/IERC20.sol";
+import {ILBRouter} from "../../interface/ILBRouter.sol";
+import {IWAVAX} from "../../interface/IWAVAX.sol";
+import {IWithdrawer} from "../../interface/IWithdrawer.sol";
+import {IHardwareProvider} from "./IHardwareProvider.sol";
+import {MinipoolManager} from "../MinipoolManager.sol";
+import {Staking} from "../Staking.sol";
+import {Storage} from "../Storage.sol";
+import {TokenGGP} from "../tokens/TokenGGP.sol";
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 

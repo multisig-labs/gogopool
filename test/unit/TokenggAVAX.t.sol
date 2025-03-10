@@ -600,7 +600,7 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 	///      when a liquid staker is able to withdraw all contract assets
 	///      mid rewards cycle. This is unlikely to happen in production
 	///      when the protocol has a larger number of stakers
-	function testFailRedeemWithdrawAllAssetsMidRewardsCycle() public {
+	function testRevert_RedeemWithdrawAllAssetsMidRewardsCycle() public {
 		uint128 seed = 1000;
 		uint128 reward = 100;
 
@@ -639,11 +639,15 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 
 		// attempt to redeem all shares, which fails
 		vm.prank(liqStaker);
-		ggAVAX.redeem(ggAVAX.maxRedeem(liqStaker), liqStaker, liqStaker);
+		uint256 redeemAmount = ggAVAX.maxRedeem(liqStaker);
+		vm.expectRevert(stdError.arithmeticError);
+		ggAVAX.redeem(redeemAmount, liqStaker, liqStaker);
 
 		// attempt to withdraw all assets, which fails
 		vm.prank(liqStaker);
-		ggAVAX.withdraw(ggAVAX.maxWithdraw(liqStaker), liqStaker, liqStaker);
+		uint256 withdrawAmount = ggAVAX.maxWithdraw(liqStaker);
+		vm.expectRevert(stdError.arithmeticError);
+		ggAVAX.withdraw(withdrawAmount, liqStaker, liqStaker);
 	}
 
 	function testReserveLowerThanExpected() public {

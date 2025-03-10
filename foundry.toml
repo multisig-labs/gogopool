@@ -11,7 +11,8 @@ fs_permissions = [{ access = "read-write", path = "./deployed/"}]
 remappings = [
 	'@openzeppelin/=node_modules/@openzeppelin/'
 ]
-
+src = "contracts"
+exclude = ["contracts/contract/previousVersions/**/*.sol"]
 # [profile.lite.optimizer_details.yulDetails]
 # optimizerSteps = ''
 

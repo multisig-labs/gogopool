@@ -7,7 +7,7 @@
   "MinipoolManager": "0xc300Bc9B4b690BA7A182126299a0618eCe268Ee7",
   "MinipoolStreamliner": "0x752AB1dA3f8Fb0e715976BD5C3416a3A8E163aE1",
   "MinipoolStreamlinerAdmin": "0x9484D5da62664D65744De5D2C148c0Ee89416C71",
-  "MinipoolStreamlinerImpl": "0xae1E7B06544a13315E6F7301CC161761813Ce4B1",
+  "MinipoolStreamlinerImpl": "0x746F2c0cf9CDac51E6AA7BC7020F9FDa6ac1ecD8",
   "MultisigManager": "0x7fff419c562Dd8b3cf16C335a01CDb37ea1B6a3B",
   "Ocyticus": "0x9189d18F453b1Ec1F02E40A8e3711334f9eA210B",
   "Oracle": "0x30fb915258D844E9dC420B2C3AA97420AEA16Db7",
@@ -23,5 +23,14 @@
   "Timelock": "0xcd385F1947D532186f3F6aaa93966E3e9C14af41",
   "Vault": "0xd45Cb6F5AcA41AfAAAeBdBE4EFBA49c1bC41E6BA",
   "OonodzHardwareProvider": "0xfE6ca6cD383d1e213f5d1015dD0BB35275E8Fe3E",
-  "ArtifactHardwareProvider": "0xC095ece2C0f315381b4BF6De169FbC219B24194C"
+  "ArtifactHardwareProvider": "0xC095ece2C0f315381b4BF6De169FbC219B24194C",
+  "SubnetHardwareRentalMapping": "0x8b85CA6E43F5b057793fB7567b4b4667dFf33d0B",
+  "SubnetHardwareRentalMappingImpl": "0xF04aA1700694881761dE6D1CC1C490102FF8A9ed",
+  "SubnetHardwareRentalMappingAdmin": "0x89cf789e6b622e29ddAF5283cC0C2B1301b9b64D",
+  "CoqnetHardwareRental": "0x7a212fB6b84461CF4f889caB42Ff9E856dB9a6dC",
+  "CoqnetHardwareRentalImpl": "0x8A2De3cCc35888bBdba2650cF10417B2089Ac366",
+  "CoqnetHardwareRentalAdmin": "0x19Da5D5e16615a354316b792EF91D2dd43d439F4",
+  "AvalancheHardwareRental": "0xf451171872e9395021316e44D9f5475C90e27848",
+  "AvalancheHardwareRentalImpl": "0x456A6e49409F137138e2e0255368a3a37876e87B",
+  "AvalancheHardwareRentalAdmin": "0xC7Fef2eac21dDdF9FA332c1fF4cf208599d7A6c6"
 }

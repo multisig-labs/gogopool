@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pragma solidity 0.8.17;
 
-import {StdCheats} from "forge-std/StdCheats.sol";
-import {IERC20} from "../../../contracts/interface/IERC20.sol";
+import "forge-std/Test.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-contract MockLBRouter is StdCheats {
+contract MockTraderJoeRouter is StdCheats {
 	enum Version {
 		V1,
 		V2,

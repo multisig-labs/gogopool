@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pragma solidity 0.8.17;
 
-import {IHardwareProvider} from "../../../contracts/interface/IHardwareProvider.sol";
+import {IHardwareProvider} from "../../../contracts/contract/previousVersions/IHardwareProvider.sol";
 
 contract MockHardwareProvider is IHardwareProvider {
 	mapping(address => bool) public hasHardware;

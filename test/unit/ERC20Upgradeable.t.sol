@@ -6,6 +6,8 @@ import {MockERC20Upgradeable} from "./utils/MockERC20Upgradeable.sol";
 import {DSTestPlus} from "lib/solmate/src/test/utils/DSTestPlus.sol";
 import {DSInvariantTest} from "lib/solmate/src/test/utils/DSInvariantTest.sol";
 
+import {stdError} from "forge-std/StdError.sol";
+
 contract ERC20UpgradeableTest is DSTestPlus {
 	MockERC20Upgradeable token;
 
@@ -108,12 +110,13 @@ contract ERC20UpgradeableTest is DSTestPlus {
 		assertEq(token.nonces(owner), 1);
 	}
 
-	function testFailTransferInsufficientBalance() public {
+	function testRevert_TransferInsufficientBalance() public {
 		token.mint(address(this), 0.9e18);
+		hevm.expectRevert(stdError.arithmeticError);
 		token.transfer(address(0xBEEF), 1e18);
 	}
 
-	function testFailTransferFromInsufficientAllowance() public {
+	function testRevert_TransferFromInsufficientAllowance() public {
 		address from = address(0xABCD);
 
 		token.mint(from, 1e18);
@@ -121,10 +124,11 @@ contract ERC20UpgradeableTest is DSTestPlus {
 		hevm.prank(from);
 		token.approve(address(this), 0.9e18);
 
+		hevm.expectRevert(stdError.arithmeticError);
 		token.transferFrom(from, address(0xBEEF), 1e18);
 	}
 
-	function testFailTransferFromInsufficientBalance() public {
+	function testRevert_TransferFromInsufficientBalance() public {
 		address from = address(0xABCD);
 
 		token.mint(from, 0.9e18);
@@ -132,28 +136,28 @@ contract ERC20UpgradeableTest is DSTestPlus {
 		hevm.prank(from);
 		token.approve(address(this), 1e18);
 
+		hevm.expectRevert(stdError.arithmeticError);
 		token.transferFrom(from, address(0xBEEF), 1e18);
 	}
 
-	function testFailPermitBadNonce() public {
-		uint256 privateKey = 0xBEEF;
+	function testRevert_PermitBadNonce(uint248 privKey, address to, uint256 amount, uint256 deadline, uint256 nonce) public {
+		if (deadline < block.timestamp) deadline = block.timestamp;
+		uint256 privateKey = privKey;
+		if (privateKey == 0) privateKey = 1;
+		if (nonce == 0) nonce = 1;
+
 		address owner = hevm.addr(privateKey);
 
 		(uint8 v, bytes32 r, bytes32 s) = hevm.sign(
 			privateKey,
-			keccak256(
-				abi.encodePacked(
-					"\x19\x01",
-					token.DOMAIN_SEPARATOR(),
-					keccak256(abi.encode(PERMIT_TYPEHASH, owner, address(0xCAFE), 1e18, 1, block.timestamp))
-				)
-			)
+			keccak256(abi.encodePacked("\x19\x01", token.DOMAIN_SEPARATOR(), keccak256(abi.encode(PERMIT_TYPEHASH, owner, to, amount, nonce, deadline))))
 		);
 
-		token.permit(owner, address(0xCAFE), 1e18, block.timestamp, v, r, s);
+		hevm.expectRevert(bytes("INVALID_SIGNER"));
+		token.permit(owner, to, amount, deadline, v, r, s);
 	}
 
-	function testFailPermitBadDeadline() public {
+	function testRevert_PermitBadDeadline() public {
 		uint256 privateKey = 0xBEEF;
 		address owner = hevm.addr(privateKey);
 
@@ -168,10 +172,11 @@ contract ERC20UpgradeableTest is DSTestPlus {
 			)
 		);
 
+		hevm.expectRevert(bytes("INVALID_SIGNER"));
 		token.permit(owner, address(0xCAFE), 1e18, block.timestamp + 1, v, r, s);
 	}
 
-	function testFailPermitPastDeadline() public {
+	function testRevert_PermitPastDeadline() public {
 		uint256 oldTimestamp = block.timestamp;
 		uint256 privateKey = 0xBEEF;
 		address owner = hevm.addr(privateKey);
@@ -184,10 +189,11 @@ contract ERC20UpgradeableTest is DSTestPlus {
 		);
 
 		hevm.warp(block.timestamp + 1);
+		hevm.expectRevert(bytes("PERMIT_DEADLINE_EXPIRED"));
 		token.permit(owner, address(0xCAFE), 1e18, oldTimestamp, v, r, s);
 	}
 
-	function testFailPermitReplay() public {
+	function testRevert_PermitReplay() public {
 		uint256 privateKey = 0xBEEF;
 		address owner = hevm.addr(privateKey);
 
@@ -203,14 +209,11 @@ contract ERC20UpgradeableTest is DSTestPlus {
 		);
 
 		token.permit(owner, address(0xCAFE), 1e18, block.timestamp, v, r, s);
+		hevm.expectRevert("INVALID_SIGNER");
 		token.permit(owner, address(0xCAFE), 1e18, block.timestamp, v, r, s);
 	}
 
-	function testMetadata(
-		string calldata name,
-		string calldata symbol,
-		uint8 decimals
-	) public {
+	function testMetadata(string calldata name, string calldata symbol, uint8 decimals) public {
 		MockERC20Upgradeable tkn = new MockERC20Upgradeable();
 		tkn.init(name, symbol, decimals);
 		assertEq(tkn.name(), name);
@@ -225,11 +228,7 @@ contract ERC20UpgradeableTest is DSTestPlus {
 		assertEq(token.balanceOf(from), amount);
 	}
 
-	function testBurn(
-		address from,
-		uint256 mintAmount,
-		uint256 burnAmount
-	) public {
+	function testBurn(address from, uint256 mintAmount, uint256 burnAmount) public {
 		burnAmount = bound(burnAmount, 0, mintAmount);
 
 		token.mint(from, mintAmount);
@@ -259,11 +258,7 @@ contract ERC20UpgradeableTest is DSTestPlus {
 		}
 	}
 
-	function testTransferFrom(
-		address to,
-		uint256 approval,
-		uint256 amount
-	) public {
+	function testTransferFrom(address to, uint256 approval, uint256 amount) public {
 		amount = bound(amount, 0, approval);
 
 		address from = address(0xABCD);
@@ -287,12 +282,7 @@ contract ERC20UpgradeableTest is DSTestPlus {
 		}
 	}
 
-	function testPermit(
-		uint248 privKey,
-		address to,
-		uint256 amount,
-		uint256 deadline
-	) public {
+	function testPermit(uint248 privKey, address to, uint256 amount, uint256 deadline) public {
 		uint256 privateKey = privKey;
 		if (deadline < block.timestamp) deadline = block.timestamp;
 		if (privateKey == 0) privateKey = 1;
@@ -310,33 +300,26 @@ contract ERC20UpgradeableTest is DSTestPlus {
 		assertEq(token.nonces(owner), 1);
 	}
 
-	function testFailBurnInsufficientBalance(
-		address to,
-		uint256 mintAmount,
-		uint256 burnAmount
-	) public {
+	function testRevert_BurnInsufficientBalance(address to, uint256 mintAmount, uint256 burnAmount) public {
+		hevm.assume(mintAmount < type(uint256).max - 1);
 		burnAmount = bound(burnAmount, mintAmount + 1, type(uint256).max);
 
 		token.mint(to, mintAmount);
+		hevm.expectRevert(stdError.arithmeticError);
 		token.burn(to, burnAmount);
 	}
 
-	function testFailTransferInsufficientBalance(
-		address to,
-		uint256 mintAmount,
-		uint256 sendAmount
-	) public {
+	function testRevert_TransferInsufficientBalance(address to, uint256 mintAmount, uint256 sendAmount) public {
+		hevm.assume(mintAmount < type(uint256).max - 1);
 		sendAmount = bound(sendAmount, mintAmount + 1, type(uint256).max);
 
 		token.mint(address(this), mintAmount);
+		hevm.expectRevert(stdError.arithmeticError);
 		token.transfer(to, sendAmount);
 	}
 
-	function testFailTransferFromInsufficientAllowance(
-		address to,
-		uint256 approval,
-		uint256 amount
-	) public {
+	function testRevert_TransferFromInsufficientAllowance(address to, uint256 approval, uint256 amount) public {
+		hevm.assume(approval < type(uint256).max - 1);
 		amount = bound(amount, approval + 1, type(uint256).max);
 
 		address from = address(0xABCD);
@@ -346,14 +329,12 @@ contract ERC20UpgradeableTest is DSTestPlus {
 		hevm.prank(from);
 		token.approve(address(this), approval);
 
+		hevm.expectRevert(stdError.arithmeticError);
 		token.transferFrom(from, to, amount);
 	}
 
-	function testFailTransferFromInsufficientBalance(
-		address to,
-		uint256 mintAmount,
-		uint256 sendAmount
-	) public {
+	function testRevert_TransferFromInsufficientBalance(address to, uint256 mintAmount, uint256 sendAmount) public {
+		hevm.assume(mintAmount < type(uint256).max - 1);
 		sendAmount = bound(sendAmount, mintAmount + 1, type(uint256).max);
 
 		address from = address(0xABCD);
@@ -363,37 +344,14 @@ contract ERC20UpgradeableTest is DSTestPlus {
 		hevm.prank(from);
 		token.approve(address(this), sendAmount);
 
+		hevm.expectRevert(stdError.arithmeticError);
 		token.transferFrom(from, to, sendAmount);
 	}
 
-	function testFailPermitBadNonce(
-		uint256 privateKey,
-		address to,
-		uint256 amount,
-		uint256 deadline,
-		uint256 nonce
-	) public {
-		if (deadline < block.timestamp) deadline = block.timestamp;
-		if (privateKey == 0) privateKey = 1;
-		if (nonce == 0) nonce = 1;
+	function testRevert_PermitBadDeadline(uint248 privKey, address to, uint256 amount, uint256 deadline) public {
+		deadline = bound(deadline, block.timestamp, type(uint256).max - 1);
 
-		address owner = hevm.addr(privateKey);
-
-		(uint8 v, bytes32 r, bytes32 s) = hevm.sign(
-			privateKey,
-			keccak256(abi.encodePacked("\x19\x01", token.DOMAIN_SEPARATOR(), keccak256(abi.encode(PERMIT_TYPEHASH, owner, to, amount, nonce, deadline))))
-		);
-
-		token.permit(owner, to, amount, deadline, v, r, s);
-	}
-
-	function testFailPermitBadDeadline(
-		uint256 privateKey,
-		address to,
-		uint256 amount,
-		uint256 deadline
-	) public {
-		if (deadline < block.timestamp) deadline = block.timestamp;
+		uint256 privateKey = privKey;
 		if (privateKey == 0) privateKey = 1;
 
 		address owner = hevm.addr(privateKey);
@@ -403,16 +361,13 @@ contract ERC20UpgradeableTest is DSTestPlus {
 			keccak256(abi.encodePacked("\x19\x01", token.DOMAIN_SEPARATOR(), keccak256(abi.encode(PERMIT_TYPEHASH, owner, to, amount, 0, deadline))))
 		);
 
+		hevm.expectRevert(bytes("INVALID_SIGNER"));
 		token.permit(owner, to, amount, deadline + 1, v, r, s);
 	}
 
-	function testFailPermitPastDeadline(
-		uint256 privateKey,
-		address to,
-		uint256 amount,
-		uint256 deadline
-	) public {
+	function testRevert_PermitPastDeadline(uint248 privKey, address to, uint256 amount, uint256 deadline) public {
 		deadline = bound(deadline, 0, block.timestamp - 1);
+		uint256 privateKey = privKey;
 		if (privateKey == 0) privateKey = 1;
 
 		address owner = hevm.addr(privateKey);
@@ -422,16 +377,13 @@ contract ERC20UpgradeableTest is DSTestPlus {
 			keccak256(abi.encodePacked("\x19\x01", token.DOMAIN_SEPARATOR(), keccak256(abi.encode(PERMIT_TYPEHASH, owner, to, amount, 0, deadline))))
 		);
 
+		hevm.expectRevert(bytes("PERMIT_DEADLINE_EXPIRED"));
 		token.permit(owner, to, amount, deadline, v, r, s);
 	}
 
-	function testFailPermitReplay(
-		uint256 privateKey,
-		address to,
-		uint256 amount,
-		uint256 deadline
-	) public {
+	function testRevert_PermitReplay(uint248 privKey, address to, uint256 amount, uint256 deadline) public {
 		if (deadline < block.timestamp) deadline = block.timestamp;
+		uint256 privateKey = privKey;
 		if (privateKey == 0) privateKey = 1;
 
 		address owner = hevm.addr(privateKey);
@@ -442,6 +394,7 @@ contract ERC20UpgradeableTest is DSTestPlus {
 		);
 
 		token.permit(owner, to, amount, deadline, v, r, s);
+		hevm.expectRevert("INVALID_SIGNER");
 		token.permit(owner, to, amount, deadline, v, r, s);
 	}
 }
@@ -485,11 +438,7 @@ contract BalanceSum {
 		token.approve(to, amount);
 	}
 
-	function transferFrom(
-		address from,
-		address to,
-		uint256 amount
-	) public {
+	function transferFrom(address from, address to, uint256 amount) public {
 		token.transferFrom(from, to, amount);
 	}
 

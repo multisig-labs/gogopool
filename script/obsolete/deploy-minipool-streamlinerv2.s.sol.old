@@ -3,7 +3,7 @@ pragma solidity 0.8.17;
 
 import "forge-std/Script.sol";
 import {EnvironmentConfig} from "./EnvironmentConfig.s.sol";
-import {MinipoolStreamlinerV2} from "../contracts/contract/MinipoolStreamlinerV2.sol";
+import {MinipoolStreamlinerV2} from "../contracts/contract/previousVersions/MinipoolStreamlinerV2.sol";
 
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";

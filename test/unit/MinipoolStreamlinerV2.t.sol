@@ -6,7 +6,7 @@ import {console2} from "forge-std/console2.sol";
 
 import "./utils/BaseTest.sol";
 import {StdCheats} from "forge-std/StdCheats.sol";
-import {MinipoolStreamlinerV2} from "../../contracts/contract/MinipoolStreamlinerV2.sol";
+import {MinipoolStreamlinerV2} from "../../contracts/contract/previousVersions/MinipoolStreamlinerV2.sol";
 import {Staking} from "../../contracts/contract/Staking.sol";
 import {Storage} from "../../contracts/contract/Storage.sol";
 import {ClaimNodeOp} from "../../contracts/contract/ClaimNodeOp.sol";
@@ -20,7 +20,8 @@ import {TokenGGP} from "../../contracts/contract/tokens/TokenGGP.sol";
 import {ProtocolDAO} from "../../contracts/contract/ProtocolDAO.sol";
 import {IERC20} from "../../contracts/interface/IERC20.sol";
 import {RialtoSimulator} from "../../contracts/contract/utils/RialtoSimulator.sol";
-import {IHardwareProvider} from "../../contracts/interface/IHardwareProvider.sol";
+import {IHardwareProvider} from "../../contracts/contract/previousVersions/IHardwareProvider.sol";
+import {MinipoolStreamlinerV1} from "../../contracts/contract/previousVersions/MinipoolStreamlinerV1.sol";
 
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -29,7 +30,7 @@ import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.s
 import {MockERC20} from "@rari-capital/solmate/src/test/utils/mocks/MockERC20.sol";
 
 import {ILBRouter} from "../../contracts/interface/ILBRouter.sol";
-import {MockLBRouter} from "./utils/MockLBRouter.sol";
+import {MockTraderJoeRouter} from "./utils/MockTraderJoeRouter.sol";
 import {MockHardwareProvider} from "./utils/MockHardwareProvider.sol";
 
 contract MinipoolStreamlinerV2Test is BaseTest {
@@ -37,8 +38,9 @@ contract MinipoolStreamlinerV2Test is BaseTest {
 	address relaunchNodeID;
 
 	MinipoolStreamlinerV2 public mpstream;
-	MockLBRouter public tjRouter;
+	MockTraderJoeRouter public tjRouter;
 	MockHardwareProvider public mockProvider;
+	TransparentUpgradeableProxy public transparentProxy;
 
 	bytes private pubkey = hex"80817f8db58126d1b06a1fdce4a94b630c60f7b026dd6f516320fc53e13ffa7355d01dd8c8acf8b57a5d266de52bfe34";
 	bytes private sig =
@@ -57,29 +59,58 @@ contract MinipoolStreamlinerV2Test is BaseTest {
 	function setUp() public override {
 		super.setUp();
 
-		tjRouter = new MockLBRouter();
+		tjRouter = new MockTraderJoeRouter();
 		tjRouter.setToken(address(ggp));
 
-		ProxyAdmin proxyAdmin = new ProxyAdmin();
-		MinipoolStreamlinerV2 mpstreamImpl = new MinipoolStreamlinerV2();
-		TransparentUpgradeableProxy transparentProxy = new TransparentUpgradeableProxy(
-			address(mpstreamImpl),
+		// Step 1: Deploy ProxyAdmin
+		proxyAdmin = new ProxyAdmin();
+
+		// Step 2: Deploy V1 Implementation
+		MinipoolStreamlinerV1 mpstreamImplV1 = new MinipoolStreamlinerV1();
+
+		// Step 3: Deploy TransparentUpgradeableProxy with V1 implementation
+		transparentProxy = new TransparentUpgradeableProxy(
+			address(mpstreamImplV1),
 			address(proxyAdmin),
-			abi.encodeWithSelector(MinipoolStreamlinerV2.initialize.selector, store, wavax, tjRouter)
+			abi.encodeWithSelector(MinipoolStreamlinerV1.initialize.selector, store, wavax, tjRouter)
 		);
-		mpstream = MinipoolStreamlinerV2(payable(transparentProxy));
+
+		// Verify V1 Deployment
+		assertEq(proxyAdmin.getProxyImplementation(transparentProxy), address(mpstreamImplV1));
+
+		// Transfer ownership of the ProxyAdmin to the guardian
 		proxyAdmin.transferOwnership(guardian);
+
+		vm.startPrank(guardian);
+
+		// Step 4: Deploy V2 Implementation
+		MinipoolStreamlinerV2 mpStreamImplV2 = new MinipoolStreamlinerV2();
+
+		// Upgrade to V2 and call its initialize function (if needed)
+		proxyAdmin.upgradeAndCall(
+			transparentProxy,
+			address(mpStreamImplV2),
+			abi.encodeWithSelector(MinipoolStreamlinerV2.initialize.selector) // Ensure V2 supports no arguments
+		);
+
+		mpstream = MinipoolStreamlinerV2(payable(address(transparentProxy)));
+
+		// Verify Upgrade to V2
+		assertEq(proxyAdmin.getProxyImplementation(transparentProxy), address(mpStreamImplV2));
+		assertEq(mpstream.version(), 2);
 
 		nop = address(0x01);
 		vm.label(nop, "nop");
 		vm.deal(nop, 1_000_000 ether);
 		deal(address(ggp), address(nop), 1_000_000 ether);
+		vm.stopPrank();
 		vm.prank(nop);
 		ggp.approve(address(mpstream), 1_000_000 ether);
+		vm.stopPrank();
 
 		mockProvider = new MockHardwareProvider();
 
-		vm.startPrank(guardian, guardian);
+		vm.startPrank(guardian);
 		mpstream.addHardwareProvider(defaultHardwareProvider, address(mockProvider));
 		dao.setRole("Relauncher", address(mpstream), true);
 		vm.stopPrank();
@@ -95,6 +126,7 @@ contract MinipoolStreamlinerV2Test is BaseTest {
 		);
 
 		defaultMinipools.push(defaultMinipool);
+		vm.stopPrank();
 	}
 
 	/* *****************************************
