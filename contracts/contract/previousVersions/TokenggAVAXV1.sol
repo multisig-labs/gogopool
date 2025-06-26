@@ -4,8 +4,8 @@
 pragma solidity 0.8.17;
 
 import "../BaseUpgradeable.sol";
-import {ERC20Upgradeable} from "./upgradeable/ERC20Upgradeable.sol";
-import {ERC4626Upgradeable} from "./upgradeable/ERC4626Upgradeable.sol";
+import {ERC20Upgradeable} from "../tokens/upgradeable/ERC20Upgradeable.sol";
+import {ERC4626Upgradeable} from "../tokens/upgradeable/ERC4626Upgradeable.sol";
 import {ProtocolDAO} from "../ProtocolDAO.sol";
 import {Storage} from "../Storage.sol";
 
@@ -81,11 +81,6 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 		rewardsCycleLength = 14 days;
 		// Ensure it will be evenly divisible by `rewardsCycleLength`.
 		rewardsCycleEnd = (block.timestamp.safeCastTo32() / rewardsCycleLength) * rewardsCycleLength;
-	}
-
-	function reinitialize(ERC20 asset) public reinitializer(2) {
-		version = 2;
-		__ERC4626Upgradeable_init(asset, "Hypha Staked AVAX", "stAVAX");
 	}
 
 	/// @notice only accept AVAX via fallback from the WAVAX contract

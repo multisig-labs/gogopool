@@ -95,7 +95,6 @@ contract EnvironmentConfig is Script {
 	// }
 
 	function getChainId() public view returns (uint256) {
-		console2.log("Current chain id:", block.chainid);
 		return block.chainid;
 	}
 
