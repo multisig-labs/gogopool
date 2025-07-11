@@ -27,7 +27,7 @@ contract TimelockTest is Test {
 		proxyAdmin = ProxyAdmin(0x5313c309CD469B751Ad3947568D65d4a70B247cF);
 		ggAVAX = TokenggAVAX(payable(0xA25EaF2906FA1a3a13EdAc9B9657108Af7B703e3));
 		ggAVAXProxy = TransparentUpgradeableProxy(payable(0xA25EaF2906FA1a3a13EdAc9B9657108Af7B703e3));
-		ggAVAXImpl = TokenggAVAX(payable(0xf80Eb498bBfD45f5E2d123DFBdb752677757843E));
+		ggAVAXImpl = TokenggAVAX(payable(0xD960Ce17d15bd0d056BC4AadC491CBb3Fa16E584));
 		ggAVAXImplV2 = new MockTokenggAVAXV2();
 		timelock = Timelock(address(0xcd385F1947D532186f3F6aaa93966E3e9C14af41));
 	}

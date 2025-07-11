@@ -32,6 +32,9 @@ contract ScenariosTest is BaseTest {
 		investor1 = getInvestorWithTokens("investor1", ONE_K, ONE_K);
 		investor2 = getInvestorWithTokens("investor2", ONE_K, ONE_K);
 
+		grantWithdrawQueueRole(liqStaker1);
+		grantWithdrawQueueRole(liqStaker2);
+
 		fundGGPRewardsPool();
 	}
 

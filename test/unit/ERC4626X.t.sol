@@ -29,6 +29,10 @@ contract xERC4626Test is Test {
 		registerContract(store, "TokenggAVAX", address(xToken));
 
 		xToken.initialize(store, token, 0);
+
+		// Grant WITHDRAW_QUEUE_ROLE to the test contract for withdraw function testing
+		xToken.grantRole(xToken.WITHDRAW_QUEUE_ROLE(), address(this));
+
 		vm.stopPrank();
 	}
 
