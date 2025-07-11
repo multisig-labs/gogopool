@@ -139,6 +139,13 @@ abstract contract BaseTest is Test {
 		multisigMgr.enableMultisig(address(rialto));
 		rialto.setGGPPriceInAVAX(1 ether, block.timestamp);
 		deal(address(rialto), type(uint128).max);
+
+		// Grant necessary roles for testing
+		// Grant STAKER_ROLE to rialto for withdrawForDelegation tests
+		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), address(rialto));
+
+		// Grant WITHDRAW_QUEUE_ROLE to this test contract for direct withdrawal function tests
+		ggAVAX.grantRole(ggAVAX.WITHDRAW_QUEUE_ROLE(), address(this));
 		vm.stopPrank();
 
 		// Initialize the rewards cycle
@@ -201,6 +208,7 @@ abstract contract BaseTest is Test {
 		actorCounter++;
 		address addr = address(uint160(0x50000 + actorCounter));
 		vm.label(addr, name);
+
 		return addr;
 	}
 
@@ -349,5 +357,18 @@ abstract contract BaseTest is Test {
 	function transferTokensToGuardianForTests() internal {
 		vm.prank(address(0xd98C0e8352352b3c486Cc9676F1b593F4cf28102));
 		ggp.transfer(guardian, 18_000_000 ether);
+	}
+
+	/// @notice Grant WITHDRAW_QUEUE_ROLE to an address for testing withdrawal functions
+	function grantWithdrawQueueRole(address actor) internal {
+		vm.startPrank(guardian);
+		ggAVAX.grantRole(ggAVAX.WITHDRAW_QUEUE_ROLE(), actor);
+		vm.stopPrank();
+	}
+
+	/// @notice Grant STAKER_ROLE to an address for testing delegation functions
+	function grantDelegatorRole(address actor) internal {
+		vm.prank(guardian);
+		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), actor);
 	}
 }

@@ -282,12 +282,12 @@ contract TokenUpgradeTests is BaseTest {
 
 		// Upgrade using reinitialize to change name/symbol to stAVAX
 		vm.prank(guardian);
-		proxyAdmin.upgradeAndCall(ggAVAXProxy, address(ggAVAXImplV2), abi.encodeWithSelector(ggAVAXImplV2.reinitialize.selector, ERC20(assetAddress)));
+		proxyAdmin.upgradeAndCall(ggAVAXProxy, address(ggAVAXImplV2), abi.encodeWithSelector(ggAVAXImplV2.reinitialize.selector, ERC20(assetAddress), guardian));
 
 		// Verify upgrade was successful
 		assertEq(proxyAdmin.getProxyImplementation(ggAVAXProxy), address(ggAVAXImplV2));
 
-		// Verify name and symbol changed to stAVAX branding
+				// Verify name and symbol changed to stAVAX branding
 		assertEq(tokenProxy.name(), "Hypha Staked AVAX");
 		assertEq(tokenProxy.symbol(), "stAVAX");
 		// Note: version remains 1 since reinitialize doesn't update the version field
@@ -306,11 +306,24 @@ contract TokenUpgradeTests is BaseTest {
 		assertEq(tokenProxy.totalAssets(), 150 ether);
 		assertEq(tokenProxy.balanceOf(alice), 150 ether);
 
-		// Test withdrawal functionality
+		vm.stopPrank();
+
+		// Test that withdrawal is now restricted
+		vm.startPrank(alice);
+		vm.expectRevert(abi.encodeWithSelector(TokenggAVAX.AccessControlUnauthorizedAccount.selector, alice, tokenProxy.WITHDRAW_QUEUE_ROLE()));
+		tokenProxy.withdrawAVAX(25 ether);
+		vm.stopPrank();
+
+		// grant alice the WITHDRAW_QUEUE_ROLE
+		vm.startPrank(guardian);
+		tokenProxy.grantRole(tokenProxy.WITHDRAW_QUEUE_ROLE(), alice);
+		vm.stopPrank();
+
+		// Test that withdrawal works with role
+		vm.prank(alice);
 		tokenProxy.withdrawAVAX(25 ether);
 		assertEq(tokenProxy.balanceOf(alice), 125 ether);
 		assertEq(alice.balance, 25 ether);
-		vm.stopPrank();
 
 		// Verify rewards functionality still works
 		tokenProxy.syncRewards();
@@ -363,7 +376,7 @@ contract TokenUpgradeTests is BaseTest {
 			proxyAdmin.upgradeAndCall.selector,
 			ggAVAXProxy,
 			address(ggAVAXImplV2),
-			abi.encodeWithSelector(ggAVAXImplV2.reinitialize.selector, ERC20(address(wavax)))
+			abi.encodeWithSelector(ggAVAXImplV2.reinitialize.selector, ERC20(address(wavax)), guardian)
 		);
 
 		// Queue transaction through timelock (guardian acting as multisig)
@@ -425,14 +438,14 @@ contract TokenUpgradeTests is BaseTest {
 		TokenggAVAX ggAVAXImplV2 = new TokenggAVAX();
 
 		vm.prank(guardian);
-		proxyAdmin.upgradeAndCall(ggAVAXProxy, address(ggAVAXImplV2), abi.encodeWithSelector(ggAVAXImplV2.reinitialize.selector, ERC20(address(wavax))));
+		proxyAdmin.upgradeAndCall(ggAVAXProxy, address(ggAVAXImplV2), abi.encodeWithSelector(ggAVAXImplV2.reinitialize.selector, ERC20(address(wavax)), guardian));
 
 		// Verify upgrade worked
 		assertEq(tokenProxy.symbol(), "stAVAX");
 
 		// Attempt to reinitialize again should fail
 		vm.expectRevert("Initializable: contract is already initialized");
-		tokenProxy.reinitialize(ERC20(address(wavax)));
+		tokenProxy.reinitialize(ERC20(address(wavax)), guardian);
 
 		// Also test that original initialize cannot be called
 		vm.expectRevert("Initializable: contract is already initialized");

@@ -30,11 +30,31 @@ contract ERC4626StdTest is ERC4626Test {
 		ggAVAX.initialize(store, wavax, 0);
 		ggAVAX.syncRewards();
 
+		// Grant DEFAULT_ADMIN_ROLE to the test contract so it can grant roles during testing
+		ggAVAX.grantRole(ggAVAX.DEFAULT_ADMIN_ROLE(), address(this));
+
 		_vault_ = address(ggAVAX);
 		_delta_ = 0;
 		_vaultMayBeEmpty = false;
 		_unlimitedAmount = false;
 		vm.stopPrank();
+	}
+
+	// Override setUpVault to grant WITHDRAW_QUEUE_ROLE to all test users
+	function setUpVault(Init memory init) public override {
+		// Grant WITHDRAW_QUEUE_ROLE to all test users before running the base setup
+		TokenggAVAX ggAVAX = TokenggAVAX(payable(_vault_));
+
+		for (uint i = 0; i < N; i++) {
+			address user = init.user[i];
+			if (user != address(0)) {
+				// Grant role to each test user so they can call withdraw/redeem
+				ggAVAX.grantRole(ggAVAX.WITHDRAW_QUEUE_ROLE(), user);
+			}
+		}
+
+		// Call parent setup function
+		super.setUpVault(init);
 	}
 
 	// NOTE: The following test is relaxed to consider only smaller values (of type uint120),

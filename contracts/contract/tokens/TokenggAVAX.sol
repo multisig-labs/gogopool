@@ -8,6 +8,7 @@ import {ERC20Upgradeable} from "./upgradeable/ERC20Upgradeable.sol";
 import {ERC4626Upgradeable} from "./upgradeable/ERC4626Upgradeable.sol";
 import {ProtocolDAO} from "../ProtocolDAO.sol";
 import {Storage} from "../Storage.sol";
+import {Vault} from "../Vault.sol";
 
 import {IWithdrawer} from "../../interface/IWithdrawer.sol";
 import {IWAVAX} from "../../interface/IWAVAX.sol";
@@ -30,10 +31,33 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	error ZeroShares();
 	error ZeroAssets();
 	error InvalidStakingDeposit();
+	error InvalidDelegationDeposit();
+	error ZeroSharesToBurn();
+	error InsufficientShares();
+	error WithdrawAmountTooLarge();
+	error WithdrawForStakingDisabled();
+	error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
 
 	event NewRewardsCycle(uint256 indexed cycleEnd, uint256 rewardsAmt);
-	event WithdrawnForStaking(address indexed caller, uint256 assets);
 	event DepositedFromStaking(address indexed caller, uint256 baseAmt, uint256 rewardsAmt);
+	event DepositedAdditionalYield(bytes32 indexed source, address indexed caller, uint256 baseAmount, uint256 rewardAmt);
+	event FeeCollected(bytes32 indexed source, uint256 feeAmount);
+	event YieldDonated(address indexed caller, bytes32 indexed source, uint256 sharesBurnt, uint256 avaxEquivalent);
+	event WithdrawnForStaking(address indexed caller, bytes32 indexed purpose, uint256 assets);
+
+	/// @notice Role events
+	event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
+	event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
+
+	/// @notice Admin transfer events
+	event AdminTransferInitiated(address indexed currentAdmin, address indexed pendingAdmin);
+	event AdminTransferCompleted(address indexed previousAdmin, address indexed newAdmin);
+	event AdminTransferCanceled(address indexed admin, address indexed canceledPendingAdmin);
+
+	/// @notice Additional operational events
+	event ContractPauseStateChanged(bool paused);
+	event RewardsCycleParametersUpdated(uint32 newCycleLength);
+	event ContractReinitialize(uint256 version, address asset, address admin);
 
 	/// @notice the effective start of the current cycle
 	uint32 public lastSync;
@@ -53,6 +77,30 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	/// @notice total amount of avax currently out for staking (not including any rewards)
 	uint256 public stakingTotalAssets;
 
+	/// @notice Default admin role identifier
+	bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
+
+	/// @notice Role identifier for delegator operations
+	bytes32 public constant STAKER_ROLE = keccak256("STAKER_ROLE");
+
+	/// @notice Role identifier for withdraw queue operations
+	bytes32 public constant WITHDRAW_QUEUE_ROLE = keccak256("WITHDRAW_QUEUE_ROLE");
+
+	/// @notice Mapping from role to account to whether they have the role
+	mapping(bytes32 => mapping(address => bool)) private _roles;
+
+	/// @notice Pending admin for two-step admin transfer
+	address private _pendingAdmin;
+
+	/// @notice Current admin address
+	address private _currentAdmin;
+
+	/// @notice Modifier to check if caller has a specific role
+	modifier onlyRole(bytes32 role) {
+		_checkRole(role);
+		_;
+	}
+
 	modifier whenTokenNotPaused(uint256 amt) {
 		if (amt > 0 && getBool(keccak256(abi.encodePacked("contract.paused", "TokenggAVAX")))) {
 			revert ContractPaused();
@@ -70,6 +118,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	function initialize(Storage storageAddress, ERC20 asset, uint256 initialDeposit) public initializer {
 		__ERC4626Upgradeable_init(asset, "GoGoPool Liquid Staking Token", "ggAVAX");
 		__BaseUpgradeable_init(storageAddress);
+		_grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
 
 		version = 1;
 
@@ -83,9 +132,12 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 		rewardsCycleEnd = (block.timestamp.safeCastTo32() / rewardsCycleLength) * rewardsCycleLength;
 	}
 
-	function reinitialize(ERC20 asset) public reinitializer(2) {
-		version = 2;
+	function reinitialize(ERC20 asset, address defaultAdmin) public reinitializer(3) {
+		version = 3;
 		__ERC4626Upgradeable_init(asset, "Hypha Staked AVAX", "stAVAX");
+		_grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
+
+		emit ContractReinitialize(version, address(asset), defaultAdmin);
 	}
 
 	/// @notice only accept AVAX via fallback from the WAVAX contract
@@ -160,25 +212,118 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	/// @param baseAmt The amount of liquid staker AVAX used to create a minipool
 	/// @param rewardAmt The rewards amount (in AVAX) earned from staking
 	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt) public payable onlySpecificRegisteredContract("MinipoolManager", msg.sender) {
+		ProtocolDAO protocolDAO = ProtocolDAO(getContractAddress("ProtocolDAO"));
+		Vault vault = Vault(getContractAddress("Vault"));
+
 		uint256 totalAmt = msg.value;
-		if (totalAmt != (baseAmt + rewardAmt) || baseAmt > stakingTotalAssets) {
+		uint256 feeAmount = rewardAmt.mulDivDown(protocolDAO.getFeeBips(), 10000);
+		rewardAmt -= feeAmount;
+		if (totalAmt != (baseAmt + rewardAmt + feeAmount) || baseAmt > stakingTotalAssets) {
 			revert InvalidStakingDeposit();
 		}
 
-		emit DepositedFromStaking(msg.sender, baseAmt, rewardAmt);
+		if (feeAmount > 0) {
+			vault.depositAVAX{value: feeAmount}();
+			vault.transferAVAX("ClaimProtocolDAO", feeAmount);
+			emit FeeCollected(bytes32("STAKING"), feeAmount);
+		}
+
 		stakingTotalAssets -= baseAmt;
-		IWAVAX(address(asset)).deposit{value: totalAmt}();
+		IWAVAX(address(asset)).deposit{value: totalAmt - feeAmount}();
+
+		emit DepositedFromStaking(msg.sender, baseAmt, rewardAmt);
+	}
+
+	/// @notice Allows users to deposit additional yield from activities such as MEV
+	/// @param baseAmt The base amount being returned from staking/delegation
+	/// @param rewardAmt The reward amount from yield activities
+	/// @param source The source of the additional yield (i.e. MEV)
+	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt, bytes32 source) public payable onlyRole(STAKER_ROLE) {
+		ProtocolDAO protocolDAO = ProtocolDAO(getContractAddress("ProtocolDAO"));
+		Vault vault = Vault(getContractAddress("Vault"));
+
+		uint256 totalAmt = msg.value;
+		uint256 feeAmt = rewardAmt.mulDivDown(protocolDAO.getFeeBips(), 10000);
+		rewardAmt -= feeAmt;
+
+		if (totalAmt != (baseAmt + rewardAmt + feeAmt) || baseAmt > stakingTotalAssets) {
+			revert InvalidDelegationDeposit();
+		}
+
+		if (feeAmt > 0) {
+			vault.depositAVAX{value: feeAmt}();
+			vault.transferAVAX("ClaimProtocolDAO", feeAmt);
+			emit FeeCollected(source, feeAmt);
+		}
+
+		stakingTotalAssets -= baseAmt;
+		IWAVAX(address(asset)).deposit{value: totalAmt - feeAmt}();
+		emit DepositedAdditionalYield(source, msg.sender, baseAmt, rewardAmt);
+	}
+
+	/// @notice Allows anyone to deposit yield to the contract
+	/// @param source The source of the yield (i.e. MEV)
+	function depositYield(bytes32 source) public payable {
+		ProtocolDAO protocolDAO = ProtocolDAO(getContractAddress("ProtocolDAO"));
+		uint256 totalAmt = msg.value;
+		uint256 feeAmt = totalAmt.mulDivDown(protocolDAO.getFeeBips(), 10000);
+
+		Vault vault = Vault(getContractAddress("Vault"));
+		if (feeAmt > 0) {
+			vault.depositAVAX{value: feeAmt}();
+			vault.transferAVAX("ClaimProtocolDAO", feeAmt);
+			emit FeeCollected(source, feeAmt);
+		}
+
+		IWAVAX(address(asset)).deposit{value: totalAmt - feeAmt}();
+		emit DepositedAdditionalYield(source, msg.sender, totalAmt, feeAmt);
+	}
+
+	// Burn ggAVAX to increase yield for all holders
+	function donateYield(uint256 sharesToBurn, bytes32 source) external {
+		if (sharesToBurn == 0) {
+			revert ZeroSharesToBurn();
+		}
+
+		if (balanceOf[msg.sender] < sharesToBurn) {
+			revert InsufficientShares();
+		}
+
+		_burn(msg.sender, sharesToBurn);
+
+		uint256 avaxEquivalent = convertToAssets(sharesToBurn);
+
+		emit YieldDonated(msg.sender, source, sharesToBurn, avaxEquivalent);
 	}
 
 	/// @notice Allows the MinipoolManager contract to withdraw liquid staker funds to create a minipool
 	/// @param assets The amount of AVAX to withdraw
-	function withdrawForStaking(uint256 assets) public onlySpecificRegisteredContract("MinipoolManager", msg.sender) {
-		emit WithdrawnForStaking(msg.sender, assets);
+	function withdrawForStaking(uint256 assets) external onlySpecificRegisteredContract("MinipoolManager", msg.sender) {
+		emit WithdrawnForStaking(msg.sender, bytes32("MINIPOOL"), assets);
 
 		stakingTotalAssets += assets;
 		IWAVAX(address(asset)).withdraw(assets);
 		IWithdrawer withdrawer = IWithdrawer(msg.sender);
 		withdrawer.receiveWithdrawalAVAX{value: assets}();
+	}
+
+	/// @notice Allows any address with STAKER_ROLE to withdraw liquid staker funds for delegation
+	/// @param assets The amount of AVAX to withdraw
+	function withdrawForStaking(uint256 assets, bytes32 purpose) external onlyRole(STAKER_ROLE) {
+		ProtocolDAO dao = ProtocolDAO(getContractAddress("ProtocolDAO"));
+		if (!dao.getWithdrawForDelegationEnabled()) {
+			revert WithdrawForStakingDisabled();
+		}
+
+		TokenggAVAX ggAVAX = TokenggAVAX(payable(getContractAddress("TokenggAVAX")));
+		if (assets > ggAVAX.amountAvailableForStaking()) {
+			revert WithdrawAmountTooLarge();
+		}
+
+		stakingTotalAssets += assets;
+		IWAVAX(address(asset)).withdraw(assets);
+		emit WithdrawnForStaking(msg.sender, purpose, assets);
+		msg.sender.safeTransferETH(assets);
 	}
 
 	/// @notice Allows users to deposit AVAX and receive ggAVAX
@@ -197,10 +342,10 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 		afterDeposit(assets, shares);
 	}
 
-	/// @notice Allows users to specify an amount of AVAX to withdraw from their ggAVAX supply
+	/// @notice Allows withdraw queue to specify an amount of AVAX to withdraw from ggAVAX supply
 	/// @param assets Amount of AVAX to be withdrawn
 	/// @return shares Amount of ggAVAX burned
-	function withdrawAVAX(uint256 assets) public returns (uint256 shares) {
+	function withdrawAVAX(uint256 assets) public onlyRole(WITHDRAW_QUEUE_ROLE) returns (uint256 shares) {
 		shares = previewWithdraw(assets); // No need to check for rounding error, previewWithdraw rounds up.
 		beforeWithdraw(assets, shares);
 		_burn(msg.sender, shares);
@@ -211,10 +356,10 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 		msg.sender.safeTransferETH(assets);
 	}
 
-	/// @notice Allows users to specify shares of ggAVAX to redeem for AVAX
+	/// @notice Allows withdraw queue to specify shares of ggAVAX to redeem for AVAX
 	/// @param shares Amount of ggAVAX to burn
 	/// @return assets Amount of AVAX withdrawn
-	function redeemAVAX(uint256 shares) public returns (uint256 assets) {
+	function redeemAVAX(uint256 shares) public onlyRole(WITHDRAW_QUEUE_ROLE) returns (uint256 assets) {
 		// Check for rounding error since we round down in previewRedeem.
 		if ((assets = previewRedeem(shares)) == 0) {
 			revert ZeroAssets();
@@ -226,6 +371,83 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 
 		IWAVAX(address(asset)).withdraw(assets);
 		msg.sender.safeTransferETH(assets);
+	}
+
+	/// @notice Override ERC4626 withdraw to restrict access to withdraw queue only
+	/// @param assets Amount of AVAX to withdraw
+	/// @param receiver Address to receive the AVAX
+	/// @param owner Address that owns the shares being burned
+	/// @return shares Amount of shares burned
+	function withdraw(uint256 assets, address receiver, address owner) public override onlyRole(WITHDRAW_QUEUE_ROLE) returns (uint256 shares) {
+		return super.withdraw(assets, receiver, owner);
+	}
+
+	/// @notice Override ERC4626 redeem to restrict access to withdraw queue only
+	/// @param shares Amount of shares to redeem
+	/// @param receiver Address to receive the AVAX
+	/// @param owner Address that owns the shares being burned
+	/// @return assets Amount of AVAX transferred
+	function redeem(uint256 shares, address receiver, address owner) public override onlyRole(WITHDRAW_QUEUE_ROLE) returns (uint256 assets) {
+		return super.redeem(shares, receiver, owner);
+	}
+
+	/// @notice Grant a role to an account - only admin can grant
+	/// @param role The role identifier
+	/// @param account The account to grant the role to
+	function grantRole(bytes32 role, address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
+		_grantRole(role, account);
+	}
+
+	/// @notice Revoke a role from an account - only admin can revoke
+	/// @param role The role identifier
+	/// @param account The account to revoke the role from
+	function revokeRole(bytes32 role, address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
+		// Prevent admin from revoking their own admin role without a pending admin
+		if (role == DEFAULT_ADMIN_ROLE && account == msg.sender && _pendingAdmin == address(0)) {
+			revert("Cannot revoke admin role without pending admin");
+		}
+		_revokeRole(role, account);
+	}
+
+	/// @notice Initiate admin transfer to a new address
+	/// @param newAdmin The address to transfer admin rights to
+	function transferAdmin(address newAdmin) public onlyRole(DEFAULT_ADMIN_ROLE) {
+		require(newAdmin != address(0), "New admin cannot be zero address");
+		require(newAdmin != msg.sender, "Cannot transfer to self");
+
+		_pendingAdmin = newAdmin;
+		emit AdminTransferInitiated(msg.sender, newAdmin);
+	}
+
+	/// @notice Accept admin transfer - only pending admin can call
+	function acceptAdmin() public {
+		require(_pendingAdmin != address(0), "No pending admin transfer");
+		require(msg.sender == _pendingAdmin, "Only pending admin can accept");
+
+		address previousAdmin = _getAdmin();
+		address newAdmin = _pendingAdmin;
+
+		_pendingAdmin = address(0);
+		_revokeRole(DEFAULT_ADMIN_ROLE, previousAdmin);
+		_grantRole(DEFAULT_ADMIN_ROLE, newAdmin);
+
+		emit AdminTransferCompleted(previousAdmin, newAdmin);
+	}
+
+	/// @notice Cancel pending admin transfer - only current admin can call
+	function cancelAdminTransfer() public onlyRole(DEFAULT_ADMIN_ROLE) {
+		require(_pendingAdmin != address(0), "No pending admin transfer");
+
+		address canceledPendingAdmin = _pendingAdmin;
+		_pendingAdmin = address(0);
+
+		emit AdminTransferCanceled(msg.sender, canceledPendingAdmin);
+	}
+
+	/// @notice Renounce admin role - only if there's a pending admin
+	function renounceAdmin() public onlyRole(DEFAULT_ADMIN_ROLE) {
+		require(_pendingAdmin != address(0), "Must have pending admin to renounce");
+		_revokeRole(DEFAULT_ADMIN_ROLE, msg.sender);
 	}
 
 	/// @notice Max assets an owner can deposit
@@ -266,6 +488,26 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 		return shares > avail ? avail : shares;
 	}
 
+	/// @notice Check if an account has a specific role
+	/// @param role The role identifier
+	/// @param account The account to check
+	/// @return bool True if the account has the role
+	function hasRole(bytes32 role, address account) public view returns (bool) {
+		return _roles[role][account];
+	}
+
+	/// @notice Get the current admin address
+	/// @return address The current admin address
+	function admin() public view returns (address) {
+		return _getAdmin();
+	}
+
+	/// @notice Get the pending admin address
+	/// @return address The pending admin address (zero if none)
+	function pendingAdmin() public view returns (address) {
+		return _pendingAdmin;
+	}
+
 	/// @notice Preview shares minted for AVAX deposit
 	/// @param assets Amount of AVAX to deposit
 	/// @return uint256 Amount of ggAVAX that would be minted
@@ -297,4 +539,47 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	function versionHash() internal view override returns (bytes32) {
 		return keccak256(abi.encodePacked(version));
 	}
+
+	/// @notice Internal function to check if caller has role
+	/// @param role The role identifier
+	function _checkRole(bytes32 role) internal view {
+		if (!hasRole(role, msg.sender)) {
+			revert AccessControlUnauthorizedAccount(msg.sender, role);
+		}
+	}
+
+	/// @notice Internal function to grant a role
+	/// @param role The role identifier
+	/// @param account The account to grant the role to
+	function _grantRole(bytes32 role, address account) internal {
+		if (!hasRole(role, account)) {
+			_roles[role][account] = true;
+			if (role == DEFAULT_ADMIN_ROLE) {
+				_currentAdmin = account;
+			}
+			emit RoleGranted(role, account, msg.sender);
+		}
+	}
+
+	/// @notice Internal function to revoke a role
+	/// @param role The role identifier
+	/// @param account The account to revoke the role from
+	function _revokeRole(bytes32 role, address account) internal {
+		if (hasRole(role, account)) {
+			_roles[role][account] = false;
+			if (role == DEFAULT_ADMIN_ROLE && account == _currentAdmin) {
+				_currentAdmin = address(0);
+			}
+			emit RoleRevoked(role, account, msg.sender);
+		}
+	}
+
+	/// @notice Internal function to get the current admin
+	/// @return address The current admin address
+	function _getAdmin() internal view returns (address) {
+		return _currentAdmin;
+	}
+
+	/// @dev Storage gap for future upgrades
+	uint256[50] private __gap;
 }
