@@ -145,6 +145,41 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		emit UnstakeRequested(requestId, msg.sender, shares, expectedAssets, currentTime + unstakeDelay);
 	}
 
+	function requestUnstakeOnBehalfOf(uint256 shares, address requester) external returns (uint256 requestId) {
+		if (shares == 0) {
+			revert ZeroShares();
+		}
+
+		// We want to transfer shares from caller (NOT requester) to this contract
+		if (tokenggAVAX.balanceOf(msg.sender) < shares) {
+			revert InsufficientTokenBalance();
+		}
+
+		uint256 expectedAssets = tokenggAVAX.convertToAssets(shares);
+
+		// We want to transfer shares from caller (NOT requester) to this contract
+		ERC20(address(tokenggAVAX)).safeTransferFrom(msg.sender, address(this), shares);
+
+		requestId = nextRequestId++;
+		uint48 currentTime = uint48(block.timestamp);
+
+		requests[requestId] = UnstakeRequest({
+			requester: requester,
+			shares: shares,
+			expectedAssets: expectedAssets,
+			requestTime: currentTime,
+			claimableTime: currentTime + unstakeDelay,
+			expirationTime: currentTime + unstakeDelay + expirationDelay,
+			allocatedFunds: 0
+		});
+
+		requestsByOwner[requester].add(requestId);
+		pendingRequests.add(requestId);
+		pendingRequestsQueue.pushBack(bytes32(requestId));
+
+		emit UnstakeRequested(requestId, requester, shares, expectedAssets, currentTime + unstakeDelay);
+	}
+
 	/// @notice Claim your AVAX after your unstake request is fulfilled
 	/// @param requestId The ID of your unstake request
 	function claimUnstake(uint256 requestId) external {
