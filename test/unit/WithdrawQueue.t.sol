@@ -79,6 +79,38 @@ contract WithdrawQueueTest is BaseTest {
 		withdrawQueue.setMaxPendingRequestsLimit(200);
 	}
 
+	function testSetUnstakeDelay() public {
+		// Test initial value
+		assertEq(withdrawQueue.unstakeDelay(), UNSTAKE_DELAY);
+		
+		// Test setter (only admin can set)
+		uint48 newDelay = 10 days;
+		vm.prank(guardian);
+		withdrawQueue.setUnstakeDelay(newDelay);
+		assertEq(withdrawQueue.unstakeDelay(), newDelay);
+		
+		// Test that non-admin cannot set
+		vm.prank(alice);
+		vm.expectRevert();
+		withdrawQueue.setUnstakeDelay(5 days);
+	}
+
+	function testSetExpirationDelay() public {
+		// Test initial value
+		assertEq(withdrawQueue.expirationDelay(), EXPIRATION_DELAY);
+		
+		// Test setter (only admin can set)
+		uint48 newDelay = 21 days;
+		vm.prank(guardian);
+		withdrawQueue.setExpirationDelay(newDelay);
+		assertEq(withdrawQueue.expirationDelay(), newDelay);
+		
+		// Test that non-admin cannot set
+		vm.prank(alice);
+		vm.expectRevert();
+		withdrawQueue.setExpirationDelay(7 days);
+	}
+
 	function testInitializationEvent() public {
 		// Deploy a new WithdrawQueue to test the initialization event
 		WithdrawQueue newWithdrawQueueImpl = new WithdrawQueue();
@@ -229,18 +261,16 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(address(withdrawQueue).balance, yieldAmount);
 	}
 
-	function testDepositYieldViaReceive() public {
+	function testReceiveAVAXReverts() public {
 		uint256 yieldAmount = 50 ether;
 
 		uint256 ggAVAXWAVAXBefore = ggAVAX.asset().balanceOf(address(ggAVAX));
 
 		vm.deal(charlie, yieldAmount);
-		vm.prank(charlie);
-		(bool success, ) = address(withdrawQueue).call{value: yieldAmount}("");
-		require(success, "Direct payment failed");
-
-		// Since no pending requests, all yield should be returned to ggAVAX as WAVAX
-		assertEq(ggAVAX.asset().balanceOf(address(ggAVAX)), ggAVAXWAVAXBefore + yieldAmount);
+		vm.startPrank(charlie);
+		vm.expectRevert(WithdrawQueue.DirectAVAXDepositsNotSupported.selector);
+		address(withdrawQueue).call{value: yieldAmount}("");
+		vm.stopPrank();
 	}
 
 	function testDepositAdditionalYieldAutoFulfillsPendingRequests() public {

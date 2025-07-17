@@ -11,8 +11,8 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 	using FixedPointMathLib for uint256;
 
 	// Events to test against
-	event YieldDonated(address indexed caller, string indexed source, uint256 sharesBurnt, uint256 avaxEquivalent);
-	event WithdrawnForStaking(address indexed caller, bytes32 indexed purpose, uint256 assets);
+	event YieldDonated(string indexed source, address indexed caller, uint256 sharesBurnt, uint256 avaxEquivalent);
+	event WithdrawnForStaking(bytes32 indexed purpose, address indexed caller, uint256 assets);
 	event DepositedAdditionalYield(bytes32 indexed source, address indexed caller, uint256 baseAmount, uint256 rewardAmt);
 	event FeeCollected(bytes32 indexed source, uint256 feeAmount);
 
@@ -1016,7 +1016,7 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 
 		// Test: Multisig withdraws for delegation
 		vm.expectEmit(true, false, false, true);
-		emit WithdrawnForStaking(address(rialto), bytes32("DELEGATION"), withdrawAmount);
+		emit WithdrawnForStaking(bytes32("DELEGATION"), address(rialto), withdrawAmount);
 
 		vm.prank(address(rialto)); // rialto is a multisig
 		ggAVAX.withdrawForStaking(withdrawAmount, bytes32("DELEGATION"));
@@ -1174,11 +1174,7 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 		uint256 totalFees = 0;
 
 		for (uint256 i = 0; i < yieldAmounts.length; i++) {
-			address provider = getActorWithTokens(
-				string(abi.encodePacked("provider", i)),
-				uint128(yieldAmounts[i]),
-				0 ether
-			);
+			address provider = getActorWithTokens(string(abi.encodePacked("provider", i)), uint128(yieldAmounts[i]), 0 ether);
 			uint256 fee = yieldAmounts[i].mulDivDown(500, 10000);
 			totalFees += fee;
 			totalYield += yieldAmounts[i] - fee;
@@ -1196,16 +1192,16 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 		// When yield is 0, fee will also be 0 regardless of fee rate
 		vm.prank(guardian);
 		store.setUint(keccak256("ProtocolDAO.FeeBips"), 1000); // 10% fee
-		
+
 		bytes32 source = bytes32("ZERO_TEST");
-		
+
 		// Should emit event with 0 amounts (0 * 10% = 0 fee)
 		vm.expectEmit(true, true, false, true);
 		emit DepositedAdditionalYield(source, alice, 0, 0);
-		
+
 		vm.prank(alice);
 		ggAVAX.depositYield{value: 0}(source);
-		
+
 		// Should complete without reverting
 		assertEq(wavax.balanceOf(address(ggAVAX)), 0);
 		assertEq(vault.balanceOf("ClaimProtocolDAO"), 0);
@@ -1215,16 +1211,16 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 		// When both fee and yield are 0, it should work now that the fix is in place
 		vm.prank(guardian);
 		store.setUint(keccak256("ProtocolDAO.FeeBips"), 0); // 0% fee
-		
+
 		bytes32 source = bytes32("ZERO_TEST");
-		
+
 		// Should emit event with 0 amounts
 		vm.expectEmit(true, true, false, true);
 		emit DepositedAdditionalYield(source, alice, 0, 0);
-		
+
 		vm.prank(alice);
 		ggAVAX.depositYield{value: 0}(source);
-		
+
 		// Should complete without reverting
 		assertEq(wavax.balanceOf(address(ggAVAX)), 0);
 	}
@@ -1251,7 +1247,7 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 		uint256 feeAmount = yieldAmount.mulDivDown(1000, 10000); // 10%
 		uint256 netYield = yieldAmount - feeAmount;
 		address yieldProvider = getActorWithTokens("yieldProvider", uint128(yieldAmount), 0 ether);
-		
+
 		vm.prank(yieldProvider);
 		ggAVAX.depositYield{value: yieldAmount}(bytes32("YIELD_TEST"));
 

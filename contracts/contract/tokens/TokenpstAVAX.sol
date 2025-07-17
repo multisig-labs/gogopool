@@ -150,13 +150,28 @@ contract TokenpstAVAX is ERC20Upgradeable, OwnableUpgradeable, PausableUpgradeab
 
 	/// @notice Calculate how much excess vault shares the contract has
 	function getExcessShares() public view returns (uint256) {
-		uint256 totalVaultShares = IERC4626(vault).balanceOf(address(this));
+		uint256 pstAVAXVaultShares = IERC4626(vault).balanceOf(address(this));
 		uint256 totalPstTokens = totalSupply();
-		// Calculate how many vault shares should be backing pstAVAX tokens
-		uint256 requiredVaultShares = IERC4626(vault).convertToShares(totalPstTokens);
-		// Calculate excess shares (yield)
-		uint256 excessShares = totalVaultShares > requiredVaultShares ? totalVaultShares - requiredVaultShares : 0;
-		return excessShares;
+
+		if (totalPstTokens == 0) return pstAVAXVaultShares;
+
+		uint256 ggAVAXTotalShares = IERC4626(vault).totalSupply();
+		uint256 ggAVAXTotalAssets = IERC4626(vault).totalAssets();
+
+		// Excess shares calculation:
+		// If we burn X shares, remaining shares = totalVaultShares - X
+		// New total shares in vault = ggAVAXTotalShares - X
+		// New share price = ggAVAXTotalAssets / (ggAVAXTotalShares - X)
+		// We want: (pstAVAXVaultShares - X) * newSharePrice = totalPstTokens
+		// Which gives us: (totalVaultShares - X) * ggAVAXTotalAssets / (ggAVAXTotalShares - X) = totalPstTokens
+		// Solving for X: X = (totalVaultShares * ggAVAXTotalAssets - totalPstTokens * ggAVAXTotalShares) / (ggAVAXTotalAssets - totalPstTokens)
+
+		if (ggAVAXTotalAssets <= totalPstTokens) return 0; // No excess if no yield
+
+		uint256 numerator = pstAVAXVaultShares * ggAVAXTotalAssets - totalPstTokens * ggAVAXTotalShares;
+		uint256 denominator = ggAVAXTotalAssets - totalPstTokens;
+
+		return numerator / denominator;
 	}
 
 	/// @notice Emergency pause function

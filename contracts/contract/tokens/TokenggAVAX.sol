@@ -31,7 +31,6 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	error ZeroShares();
 	error ZeroAssets();
 	error InvalidStakingDeposit();
-	error InvalidDelegationDeposit();
 	error ZeroSharesToBurn();
 	error InsufficientShares();
 	error WithdrawAmountTooLarge();
@@ -39,11 +38,11 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
 
 	event NewRewardsCycle(uint256 indexed cycleEnd, uint256 rewardsAmt);
-	event DepositedFromStaking(address indexed caller, uint256 baseAmt, uint256 rewardsAmt);
+	event DepositedFromStaking(bytes32 indexed source, address indexed caller, uint256 baseAmt, uint256 rewardsAmt);
 	event DepositedAdditionalYield(bytes32 indexed source, address indexed caller, uint256 baseAmount, uint256 rewardAmt);
 	event FeeCollected(bytes32 indexed source, uint256 feeAmount);
-	event YieldDonated(address indexed caller, bytes32 indexed source, uint256 sharesBurnt, uint256 avaxEquivalent);
-	event WithdrawnForStaking(address indexed caller, bytes32 indexed purpose, uint256 assets);
+	event YieldDonated(bytes32 indexed source, address indexed caller, uint256 sharesBurnt, uint256 avaxEquivalent);
+	event WithdrawnForStaking(bytes32 indexed purpose, address indexed caller, uint256 assets);
 
 	/// @notice Role events
 	event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
@@ -85,6 +84,9 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 
 	/// @notice Role identifier for withdraw queue operations
 	bytes32 public constant WITHDRAW_QUEUE_ROLE = keccak256("WITHDRAW_QUEUE_ROLE");
+
+	/// @notice Source identifier for minipool operations
+	bytes32 public constant MINIPOOL_SOURCE = bytes32("MINIPOOL_SOURCE");
 
 	/// @notice Mapping from role to account to whether they have the role
 	mapping(bytes32 => mapping(address => bool)) private _roles;
@@ -132,9 +134,8 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 		rewardsCycleEnd = (block.timestamp.safeCastTo32() / rewardsCycleLength) * rewardsCycleLength;
 	}
 
-	function reinitialize(ERC20 asset, address defaultAdmin) public reinitializer(3) {
+	function reinitialize(address defaultAdmin) public reinitializer(3) {
 		version = 3;
-		__ERC4626Upgradeable_init(asset, "Hypha Staked AVAX", "stAVAX");
 		_grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
 
 		emit ContractReinitialize(version, address(asset), defaultAdmin);
@@ -225,13 +226,13 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 		if (feeAmount > 0) {
 			vault.depositAVAX{value: feeAmount}();
 			vault.transferAVAX("ClaimProtocolDAO", feeAmount);
-			emit FeeCollected(bytes32("STAKING"), feeAmount);
+			emit FeeCollected(MINIPOOL_SOURCE, feeAmount);
 		}
 
 		stakingTotalAssets -= baseAmt;
 		IWAVAX(address(asset)).deposit{value: totalAmt - feeAmount}();
 
-		emit DepositedFromStaking(msg.sender, baseAmt, rewardAmt);
+		emit DepositedFromStaking(MINIPOOL_SOURCE, msg.sender, baseAmt, rewardAmt);
 	}
 
 	/// @notice Allows users to deposit additional yield from activities such as MEV
@@ -247,7 +248,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 		rewardAmt -= feeAmt;
 
 		if (totalAmt != (baseAmt + rewardAmt + feeAmt) || baseAmt > stakingTotalAssets) {
-			revert InvalidDelegationDeposit();
+			revert InvalidStakingDeposit();
 		}
 
 		if (feeAmt > 0) {
@@ -258,7 +259,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 
 		stakingTotalAssets -= baseAmt;
 		IWAVAX(address(asset)).deposit{value: totalAmt - feeAmt}();
-		emit DepositedAdditionalYield(source, msg.sender, baseAmt, rewardAmt);
+		emit DepositedFromStaking(source, msg.sender, baseAmt, rewardAmt);
 	}
 
 	/// @notice Allows anyone to deposit yield to the contract
@@ -293,13 +294,13 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 
 		uint256 avaxEquivalent = convertToAssets(sharesToBurn);
 
-		emit YieldDonated(msg.sender, source, sharesToBurn, avaxEquivalent);
+		emit YieldDonated(source, msg.sender, sharesToBurn, avaxEquivalent);
 	}
 
 	/// @notice Allows the MinipoolManager contract to withdraw liquid staker funds to create a minipool
 	/// @param assets The amount of AVAX to withdraw
 	function withdrawForStaking(uint256 assets) external onlySpecificRegisteredContract("MinipoolManager", msg.sender) {
-		emit WithdrawnForStaking(msg.sender, bytes32("MINIPOOL"), assets);
+		emit WithdrawnForStaking(MINIPOOL_SOURCE, msg.sender, assets);
 
 		stakingTotalAssets += assets;
 		IWAVAX(address(asset)).withdraw(assets);
@@ -322,7 +323,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 
 		stakingTotalAssets += assets;
 		IWAVAX(address(asset)).withdraw(assets);
-		emit WithdrawnForStaking(msg.sender, purpose, assets);
+		emit WithdrawnForStaking(purpose, msg.sender, assets);
 		msg.sender.safeTransferETH(assets);
 	}
 

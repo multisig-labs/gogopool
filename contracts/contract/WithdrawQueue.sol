@@ -52,22 +52,22 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	uint256 private maxPendingRequestsLimit;
 
 	event UnstakeRequested(uint256 indexed requestId, address indexed requester, uint256 shares, uint256 expectedAssets, uint48 claimableTime);
-	event RequestFulfilled(uint256 indexed requestId, uint256 assets, bytes32 source);
-	event StakeDeposited(address indexed depositor, uint256 amount);
+	event RequestFulfilled(bytes32 indexed source, uint256 indexed requestId, uint256 assets);
+	event StakeDeposited(bytes32 indexed source, address indexed depositor, uint256 amount);
 	event UnstakeClaimed(uint256 indexed requestId, address indexed claimer, uint256 amount);
 	event ExpiredFundsReclaimed(uint256 indexed requestId, uint256 amount);
 	event ExpiredSharesReturned(uint256 indexed requestId, address indexed requester, uint256 shares);
 	event RequestCancelled(uint256 indexed requestId, address indexed requester, uint256 shares);
 	event ExcessSharesBurnt(uint256 indexed requestId, uint256 sharesBurnt);
-	event BatchExpiredFundsReclaimed(uint256 totalAmount, uint256 requestsProcessed);
-	event QueueCleaned(uint256 requestId, bytes32 reason);
+	event BatchExpiredFundsReclaimed(address indexed requester, uint256 totalAmount, uint256 requestsProcessed);
+	event QueueCleaned(bytes32 indexed reason, uint256 indexed requestId);
 	event ContractInitialized(address indexed tokenggAVAX, uint48 unstakeDelay, uint48 expirationDelay);
 
+	error DirectAVAXDepositsNotSupported();
 	error InsufficientAVAXBalance();
 	error InsufficientTokenBalance();
 	error NotYourRequest();
 	error NoFundsAllocated();
-	error MaxRequestsCannotBeZero();
 	error RequestNotFulfilled();
 	error RequestNotFound();
 	error RequestExpired();
@@ -105,7 +105,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	/// @dev Automatically deposits the AVAX as yield to fulfill pending unstake requests
 	receive() external payable {
 		if (msg.sender != address(tokenggAVAX) && msg.sender != address(tokenggAVAX.asset())) {
-			depositFromStaking(0, msg.value, bytes32("RECEIVE"));
+			revert DirectAVAXDepositsNotSupported();
 		}
 	}
 
@@ -333,7 +333,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			revert InvalidYieldAmounts();
 		}
 
-		emit StakeDeposited(msg.sender, msg.value);
+		emit StakeDeposited(source, msg.sender, msg.value);
 
 		// Record reward to base ratio for fractional deposits
 		uint256 rewardToBaseRatio;
@@ -352,7 +352,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			uint256 requestId = uint256(pendingRequestsQueue.front());
 			if (!pendingRequests.contains(requestId)) {
 				pendingRequestsQueue.popFront();
-				emit QueueCleaned(requestId, bytes32("REQUEST_NOT_IN_PENDING_SET"));
+				emit QueueCleaned(bytes32("REQUEST_NOT_IN_PENDING_SET"), requestId);
 				continue;
 			}
 
@@ -396,7 +396,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 				pendingRequests.remove(requestId);
 				pendingRequestsQueue.popFront();
 				fulfilledRequests.add(requestId);
-				emit RequestFulfilled(requestId, req.expectedAssets, source);
+				emit RequestFulfilled(source, requestId, req.expectedAssets);
 
 				// record accumulated excess to send back later
 				if (assetsReturned > req.expectedAssets) {
@@ -577,7 +577,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 		// Emit batch summary event
 		if (processedCount > 0) {
-			emit BatchExpiredFundsReclaimed(reclaimedAmount, processedCount);
+			emit BatchExpiredFundsReclaimed(msg.sender, reclaimedAmount, processedCount);
 		}
 	}
 
@@ -591,6 +591,18 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	/// @param newLimit The new max pending requests limit
 	function setMaxPendingRequestsLimit(uint256 newLimit) external onlyRole(DEFAULT_ADMIN_ROLE) {
 		maxPendingRequestsLimit = newLimit;
+	}
+
+	/// @notice Set the unstake delay (admin only)
+	/// @param newUnstakeDelay The new unstake delay in seconds
+	function setUnstakeDelay(uint48 newUnstakeDelay) external onlyRole(DEFAULT_ADMIN_ROLE) {
+		unstakeDelay = newUnstakeDelay;
+	}
+
+	/// @notice Set the expiration delay (admin only)
+	/// @param newExpirationDelay The new expiration delay in seconds
+	function setExpirationDelay(uint48 newExpirationDelay) external onlyRole(DEFAULT_ADMIN_ROLE) {
+		expirationDelay = newExpirationDelay;
 	}
 
 	/// @notice Get detailed information about an unstake request
@@ -633,7 +645,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		uint256 requestId = uint256(pendingRequestsQueue.front());
 		if (!pendingRequests.contains(requestId)) {
 			pendingRequestsQueue.popFront();
-			emit QueueCleaned(requestId, bytes32("REQUEST_NOT_IN_PENDING_SET_QUERY"));
+			emit QueueCleaned(bytes32("REQUEST_NOT_IN_PENDING_SET_QUERY"), requestId);
 			return 0;
 		}
 		return requests[requestId].expectedAssets;

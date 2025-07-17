@@ -18,6 +18,16 @@ exclude = ["contracts/contract/previousVersions/**/*.sol"]
 ignore = ["**/test/**/*", "*Mock*"]
 severity = ["high", "med", "low"] # All options are high, med, low, info, gas
 
+[invariant]
+runs = 256
+depth = 15
+fail_on_revert = false
+call_override = false
+dictionary_weight = 80
+include_storage = true
+include_push_bytes = true
+show_metrics = true
+
 # [profile.lite.optimizer_details.yulDetails]
 # optimizerSteps = ''
 
