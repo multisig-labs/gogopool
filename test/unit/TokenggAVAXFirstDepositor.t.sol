@@ -23,6 +23,9 @@ contract TokenggAVAXTestFirstDepositor is BaseTest, IWithdrawer {
 		address attacker = getActorWithTokens("attacker", 1 ether + 1, 0);
 		address victim = getActorWithTokens("victim", 2 ether, 0);
 
+		token.grantRole(token.WITHDRAW_QUEUE_ROLE(), attacker);
+		token.grantRole(token.WITHDRAW_QUEUE_ROLE(), victim);
+
 		// deposit 1 wei to mint 1 wei of shares
 		vm.startPrank(attacker);
 		wavax.approve(address(token), 1);
@@ -93,6 +96,11 @@ contract TokenggAVAXTestFirstDepositor is BaseTest, IWithdrawer {
 		address attacker = getActorWithTokens("attacker", 1 ether + 1, 0);
 		address victim = getActorWithTokens("victim", 1 ether, 0);
 
+		// Grant WITHDRAW_QUEUE_ROLE to actors for the custom token instance
+		// Note: calling from test contract since guardian is proxy admin and cannot call implementation
+		token.grantRole(token.WITHDRAW_QUEUE_ROLE(), attacker);
+		token.grantRole(token.WITHDRAW_QUEUE_ROLE(), victim);
+
 		// deposit 1 wei to mint 1 wei of shares
 		vm.startPrank(attacker);
 		wavax.approve(address(token), 1);
@@ -151,6 +159,9 @@ contract TokenggAVAXTestFirstDepositor is BaseTest, IWithdrawer {
 		// now attempt attack with 1e6 ether == 1e24
 		address attacker = getActorWithTokens("attacker", 1_000_000 ether + 1, 0);
 		address victim = getActorWithTokens("victim", 1 ether, 0);
+
+		token.grantRole(token.WITHDRAW_QUEUE_ROLE(), attacker);
+		token.grantRole(token.WITHDRAW_QUEUE_ROLE(), victim);
 
 		// deposit 1 wei to mint 1 wei of shares
 		vm.startPrank(attacker);

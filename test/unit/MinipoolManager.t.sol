@@ -1028,6 +1028,7 @@ contract MinipoolManagerTest is BaseTest {
 
 		// deposit 10,000 avax
 		address staker = getActorWithTokens("staker", depositAmt + 1000 ether, 0 ether);
+		grantWithdrawQueueRole(staker);
 		vm.startPrank(staker);
 		wavax.approve(address(ggAVAX), depositAmt);
 		ggAVAX.deposit(depositAmt, staker);

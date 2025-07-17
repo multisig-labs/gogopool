@@ -141,6 +141,25 @@ contract ProtocolDAOTest is BaseTest {
 		assertEq(dao.getExpectedAVAXRewardsRate(), 0.1 ether);
 	}
 
+	function testSetFeeBips() public {
+		assertEq(dao.getFeeBips(), 0 ether);
+
+		vm.startPrank(address(rialto));
+		vm.expectRevert(BaseAbstract.MustBeGuardian.selector);
+		dao.setFeeBips(1000);
+		vm.stopPrank();
+
+		vm.startPrank(address(guardian));
+		vm.expectRevert(ProtocolDAO.ValueNotWithinRange.selector);
+		dao.setFeeBips(10001);
+		vm.stopPrank();
+
+		vm.prank(address(guardian));
+		dao.setFeeBips(1000);
+
+		assertEq(dao.getFeeBips(), 1000);
+	}
+
 	function testGetMaxCollateralizationRatio() public {
 		assertEq(dao.getMaxCollateralizationRatio(), 1.50 ether);
 	}

@@ -3,14 +3,22 @@ pragma solidity 0.8.17;
 
 import "./utils/BaseTest.sol";
 import {BaseAbstract} from "../../contracts/contract/BaseAbstract.sol";
+import {console2} from "forge-std/console2.sol";
 
 import {stdError} from "forge-std/StdError.sol";
 
 contract TokenggAVAXTest is BaseTest, IWithdrawer {
 	using FixedPointMathLib for uint256;
 
+	// Events to test against
+	event YieldDonated(string indexed source, address indexed caller, uint256 sharesBurnt, uint256 avaxEquivalent);
+	event WithdrawnForStaking(bytes32 indexed purpose, address indexed caller, uint256 assets);
+	event DepositedAdditionalYield(bytes32 indexed source, address indexed caller, uint256 baseAmount, uint256 rewardAmt);
+	event FeeCollected(bytes32 indexed source, uint256 feeAmount);
+
 	address private alice;
 	address private bob;
+	address private charlie;
 	address private nodeID;
 	uint256 private duration;
 	uint256 private delegationFee;
@@ -28,6 +36,14 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 
 		alice = getActorWithTokens("alice", MAX_AMT, MAX_AMT);
 		bob = getActor("bob");
+		charlie = getActor("charlie");
+
+		// Grant WITHDRAW_QUEUE_ROLE to test users for withdrawal function tests
+		vm.startPrank(guardian);
+		ggAVAX.grantRole(ggAVAX.WITHDRAW_QUEUE_ROLE(), alice);
+		ggAVAX.grantRole(ggAVAX.WITHDRAW_QUEUE_ROLE(), bob);
+		ggAVAX.grantRole(ggAVAX.WITHDRAW_QUEUE_ROLE(), charlie);
+		vm.stopPrank();
 
 		nodeID = randAddress();
 		duration = 2 weeks;
@@ -260,7 +276,7 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 		assertEq(ggAVAX.amountAvailableForStaking(), 0);
 	}
 
-	function testWithdrawForStaking() public {
+	function testWithdrawForMinipoolStaking() public {
 		// Deposit liquid staker funds
 		uint256 depositAmount = 1200 ether;
 		uint256 nodeAmt = 2000 ether;
@@ -402,6 +418,7 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 		uint128 depositAmt = 100 ether;
 
 		address liqStaker = getActorWithTokens("liqStaker", depositAmt, 0);
+		grantWithdrawQueueRole(liqStaker);
 
 		vm.startPrank(liqStaker);
 		wavax.approve(address(ggAVAX), depositAmt);
@@ -425,6 +442,7 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 		uint128 depositAmt = 100 ether;
 
 		address liqStaker = getActorWithTokens("liqStaker", depositAmt, 0);
+		grantWithdrawQueueRole(liqStaker);
 
 		vm.prank(liqStaker);
 		ggAVAX.depositAVAX{value: depositAmt}();
@@ -446,6 +464,7 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 		uint128 depositAmt = 100 ether;
 
 		address liqStaker = getActorWithTokens("liqStaker", depositAmt, 0);
+		grantWithdrawQueueRole(liqStaker);
 		vm.startPrank(liqStaker);
 		wavax.approve(address(ggAVAX), depositAmt);
 		ggAVAX.deposit(depositAmt, liqStaker);
@@ -468,6 +487,7 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 		uint128 depositAmt = 100 ether;
 
 		address liqStaker = getActorWithTokens("liqStaker", depositAmt, 0);
+		grantWithdrawQueueRole(liqStaker);
 
 		vm.prank(liqStaker);
 		ggAVAX.depositAVAX{value: depositAmt}();
@@ -664,6 +684,7 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 
 		// now `amountAvailableForStaking` is -700 but returns 0
 		address staker = getActorWithTokens("staker", depositAmt, 0 ether);
+		grantWithdrawQueueRole(staker);
 		vm.startPrank(staker);
 		wavax.approve(address(ggAVAX), depositAmt);
 		ggAVAX.deposit(depositAmt, staker);
@@ -689,6 +710,358 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 		assertEq(ggAVAX.amountAvailableForStaking(), 0);
 	}
 
+	function testRedeemWhenNoLiquidityAvailable() public {
+		// Scenario: Deposit AVAX, withdraw for staking, then try to redeem when no liquidity available
+		uint128 depositAmount = 1000 ether;
+		address liquidStaker = getActorWithTokens("liquidStaker", depositAmount, 0);
+		grantWithdrawQueueRole(liquidStaker);
+
+		// 1. Liquid staker deposits AVAX
+		vm.prank(liquidStaker);
+		ggAVAX.depositAVAX{value: depositAmount}();
+
+		assertEq(ggAVAX.balanceOf(liquidStaker), depositAmount);
+		assertEq(ggAVAX.totalAssets(), depositAmount);
+
+		// 2. Set low reserve rate and withdraw almost all funds for staking
+		vm.prank(guardian);
+		store.setUint(keccak256("ProtocolDAO.TargetGGAVAXReserveRate"), 0.05 ether); // 5% reserve
+
+		uint256 liquidityToWithdraw = ggAVAX.amountAvailableForStaking();
+
+		// Withdraw most liquidity for staking
+		vm.prank(address(minipoolMgr));
+		ggAVAX.withdrawForStaking(liquidityToWithdraw);
+
+		// 3. Verify most liquidity is now staked
+		uint256 liquidityRemaining = ggAVAX.totalAssets() - ggAVAX.stakingTotalAssets();
+		assertLt(liquidityRemaining, depositAmount); // Most funds are staked
+
+		// 4. Check what maxRedeem and maxWithdraw return when limited by liquidity
+		uint256 maxRedeemable = ggAVAX.maxRedeem(liquidStaker);
+		uint256 maxWithdrawable = ggAVAX.maxWithdraw(liquidStaker);
+
+		// maxRedeem/maxWithdraw should be limited by available liquidity
+		assertEq(maxRedeemable, ggAVAX.convertToShares(liquidityRemaining));
+		assertEq(maxWithdrawable, liquidityRemaining);
+		assertLt(maxRedeemable, ggAVAX.balanceOf(liquidStaker));
+		assertLt(maxWithdrawable, uint256(depositAmount));
+
+		// 5. Redeem/withdraw within limits should work
+		vm.startPrank(liquidStaker);
+
+		if (maxRedeemable > 0) {
+			uint256 redeemed = ggAVAX.redeemAVAX(maxRedeemable);
+			assertEq(redeemed, maxWithdrawable);
+		}
+
+		// 6. Trying to redeem more than available should fail
+		if (ggAVAX.balanceOf(liquidStaker) > 0) {
+			// Try to redeem remaining shares when no liquidity left
+			vm.expectRevert(); // Should revert due to insufficient WAVAX in contract
+			ggAVAX.redeemAVAX(1 ether); // Try to redeem even a small amount
+		}
+
+		vm.stopPrank();
+	}
+
+	function testWAVAXTransferEnablesRedemption() public {
+		// 1. User deposits AVAX and gets ggAVAX
+		uint256 depositAmount = 1000 ether;
+		vm.startPrank(alice);
+		ggAVAX.depositAVAX{value: depositAmount}();
+		uint256 aliceShares = ggAVAX.balanceOf(alice);
+		vm.stopPrank();
+
+		// 2. Set reserve ratio to 0% so all funds can be withdrawn for staking
+		vm.startPrank(guardian);
+		store.setUint(keccak256("ProtocolDAO.TargetGGAVAXReserveRate"), 0);
+		// Enable withdrawal for delegation
+		store.setBool(keccak256("ProtocolDAO.WithdrawForDelegationEnabled"), true);
+		vm.stopPrank();
+
+		// 3. Use rialto to withdraw almost all funds from ggAVAX to simulate staking
+		uint256 withdrawAmount = ggAVAX.amountAvailableForStaking();
+
+		vm.prank(address(rialto));
+		rialto.withdrawForDelegation(withdrawAmount, randAddress());
+
+		// Verify ggAVAX has no liquid funds available
+		uint256 liquidFunds = ggAVAX.totalAssets() - ggAVAX.stakingTotalAssets();
+
+		// 4. Try to redeem AVAX - should fail due to insufficient liquidity
+		vm.startPrank(alice);
+		vm.expectRevert(); // Should revert due to insufficient funds
+		ggAVAX.redeemAVAX(100 ether);
+		vm.stopPrank();
+
+		// 5. Send WAVAX directly to TokenggAVAX to provide liquidity
+		uint256 liquidityAmount = 200 ether;
+		vm.deal(charlie, liquidityAmount);
+		vm.startPrank(charlie);
+		// Wrap AVAX to WAVAX and transfer to ggAVAX
+		wavax.deposit{value: liquidityAmount}();
+		wavax.transfer(address(ggAVAX), liquidityAmount);
+		vm.stopPrank();
+
+		// Verify ggAVAX now has WAVAX balance
+		uint256 ggAVAXWAVAXBalance = wavax.balanceOf(address(ggAVAX));
+		assertEq(ggAVAXWAVAXBalance, liquidityAmount);
+
+		// 6. Try to redeem again - should work now with the liquidity
+		vm.startPrank(alice);
+		uint256 redeemAmount = 200 ether;
+		uint256 aliceBalanceBefore = alice.balance;
+
+		// This should succeed now
+		ggAVAX.withdrawAVAX(redeemAmount);
+
+		// Verify alice received the AVAX
+		uint256 aliceBalanceAfter = alice.balance;
+		assertEq(aliceBalanceAfter, aliceBalanceBefore + redeemAmount);
+
+		// Verify alice's ggAVAX balance decreased
+		uint256 aliceSharesAfter = ggAVAX.balanceOf(alice);
+		assertLt(aliceSharesAfter, aliceShares);
+		vm.stopPrank();
+
+		// 7. Check what happens to ggAVAX totalAssets - it should NOT increase immediately
+		// The WAVAX we sent is not reflected in totalAssets until syncRewards is called
+		uint256 totalAssetsBefore = ggAVAX.totalAssets();
+
+		// But the WAVAX balance shows the extra funds are there
+		uint256 actualWAVAXBalance = wavax.balanceOf(address(ggAVAX));
+
+		// The difference shows the "unrealized" funds waiting for syncRewards
+		uint256 unrealizedFunds = actualWAVAXBalance + ggAVAX.stakingTotalAssets() - totalAssetsBefore;
+
+		// get the exhcange rate here
+		uint256 exchangeRate = ggAVAX.previewRedeem(1000 ether);
+		vm.warp(ggAVAX.rewardsCycleEnd());
+		ggAVAX.syncRewards();
+
+		vm.warp(ggAVAX.rewardsCycleEnd());
+		uint256 newExchangeRate = ggAVAX.previewRedeem(1000 ether);
+		assertGt(newExchangeRate, exchangeRate);
+	}
+
+	function testDepositAdditionalYieldZeroFees() public {
+		// set reserve rate to zero
+		vm.prank(guardian);
+		store.setUint(keccak256("ProtocolDAO.TargetGGAVAXReserveRate"), 0);
+
+		uint128 depositAmt = 100 ether;
+		address liqStaker = getActorWithTokens("liqStaker", depositAmt, 0 ether);
+		vm.startPrank(liqStaker);
+		wavax.approve(address(ggAVAX), depositAmt);
+		ggAVAX.deposit(depositAmt, liqStaker);
+		vm.stopPrank();
+		assertEq(ggAVAX.amountAvailableForStaking(), depositAmt);
+		assertEq(ggAVAX.totalAssets(), depositAmt);
+
+		uint256 additionalYieldAmt = 5 ether;
+		address mev = getActorWithTokens("mev", uint128(additionalYieldAmt), 0 ether);
+		vm.startPrank(guardian);
+		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), address(mev));
+		vm.stopPrank();
+
+		vm.startPrank(mev);
+		ggAVAX.depositFromStaking{value: additionalYieldAmt}(0, additionalYieldAmt, "MEV");
+		vm.stopPrank();
+
+		assertEq(vault.balanceOf("ClaimProtocolDAO"), 0);
+		assertEq(wavax.balanceOf(address(ggAVAX)), depositAmt + additionalYieldAmt);
+	}
+
+	function testDepositAdditionalYieldNonZeroFees() public {
+		// set reserve rate to zero
+		vm.startPrank(guardian);
+		store.setUint(keccak256("ProtocolDAO.TargetGGAVAXReserveRate"), 0);
+		store.setUint(keccak256("ProtocolDAO.FeeBips"), 1000);
+		vm.stopPrank();
+
+		uint128 depositAmt = 100 ether;
+		address liqStaker = getActorWithTokens("liqStaker", depositAmt, 0 ether);
+		vm.startPrank(liqStaker);
+		wavax.approve(address(ggAVAX), depositAmt);
+		ggAVAX.deposit(depositAmt, liqStaker);
+		vm.stopPrank();
+		assertEq(ggAVAX.amountAvailableForStaking(), depositAmt);
+		assertEq(ggAVAX.totalAssets(), depositAmt);
+
+		uint256 additionalYieldAmt = 5 ether;
+		uint256 feeAmt = additionalYieldAmt.mulDivDown(1000, 10000);
+		address mev = getActorWithTokens("mev", uint128(additionalYieldAmt), 0 ether);
+
+		vm.startPrank(guardian);
+		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), address(mev));
+		vm.stopPrank();
+
+		vm.startPrank(mev);
+		ggAVAX.depositFromStaking{value: additionalYieldAmt}(0, additionalYieldAmt, "MEV");
+		vm.stopPrank();
+
+		assertEq(vault.balanceOf("ClaimProtocolDAO"), feeAmt);
+		assertEq(wavax.balanceOf(address(ggAVAX)), depositAmt + additionalYieldAmt - feeAmt);
+	}
+
+	function testDepositAdditionalYieldWithBaseAmount() public {
+		// Setup: Create scenario where base assets are returned from delegation
+		vm.startPrank(guardian);
+		store.setUint(keccak256("ProtocolDAO.TargetGGAVAXReserveRate"), 0);
+		store.setUint(keccak256("ProtocolDAO.FeeBips"), 500); // 5% fee
+		store.setBool(keccak256("ProtocolDAO.WithdrawForDelegationEnabled"), true);
+		vm.stopPrank();
+
+		uint128 depositAmt = 100 ether;
+		address liqStaker = getActorWithTokens("liqStaker", depositAmt, 0 ether);
+		vm.startPrank(liqStaker);
+		wavax.approve(address(ggAVAX), depositAmt);
+		ggAVAX.deposit(depositAmt, liqStaker);
+		vm.stopPrank();
+
+		// Simulate staking by increasing stakingTotalAssets
+		address delegator = getActorWithTokens("delegator", uint128(depositAmt), 0 ether);
+		vm.startPrank(guardian);
+		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), address(delegator));
+		vm.stopPrank();
+
+		uint256 stakingAmount = 50 ether;
+		vm.prank(delegator);
+		ggAVAX.withdrawForStaking(stakingAmount, "DELEGATION");
+
+		// Now we have 50 ether staked, simulate delegation returns with rewards
+		uint256 baseAmt = 30 ether; // Partial base amount returned
+		uint256 rewardAmt = 10 ether; // Reward amount
+		uint256 totalAmt = baseAmt + rewardAmt;
+		uint256 feeAmt = rewardAmt.mulDivDown(500, 10000); // 5% of rewards
+		uint256 netRewardAmt = rewardAmt - feeAmt;
+
+		uint256 stakingAssetsBefore = ggAVAX.stakingTotalAssets();
+		uint256 vaultBalanceBefore = vault.balanceOf("ClaimProtocolDAO");
+
+		vm.startPrank(delegator);
+		ggAVAX.depositFromStaking{value: totalAmt}(baseAmt, rewardAmt, "DELEGATION");
+		vm.stopPrank();
+
+		// Verify stakingTotalAssets decreased by baseAmt
+		assertEq(ggAVAX.stakingTotalAssets(), stakingAssetsBefore - baseAmt);
+		// Verify fees were collected
+		assertEq(vault.balanceOf("ClaimProtocolDAO"), vaultBalanceBefore + feeAmt);
+		// Verify total WAVAX in contract increased by base + net rewards
+		assertEq(wavax.balanceOf(address(ggAVAX)), depositAmt - stakingAmount + baseAmt + netRewardAmt);
+	}
+
+	function testDonateYield() public {
+		// Setup: User has ggAVAX shares
+		uint256 depositAmount = 1000 ether;
+		address donor = getActorWithTokens("donor", uint128(depositAmount), 0);
+
+		vm.prank(donor);
+		ggAVAX.depositAVAX{value: depositAmount}();
+
+		uint256 sharesToBurn = 100 ether;
+		uint256 donorBalanceBefore = ggAVAX.balanceOf(donor);
+		uint256 totalSupplyBefore = ggAVAX.totalSupply();
+
+		// Test: Call donateYield to burn shares
+		// Note: We don't check the exact avaxEquivalent as it can vary slightly due to rounding
+
+		vm.prank(donor);
+		ggAVAX.donateYield(sharesToBurn, "DONATION");
+
+		// Verify: Shares burned, total supply reduced
+		assertEq(ggAVAX.balanceOf(donor), donorBalanceBefore - sharesToBurn);
+		assertEq(ggAVAX.totalSupply(), totalSupplyBefore - sharesToBurn);
+	}
+
+	function testDonateYieldZeroShares() public {
+		// Test: Call donateYield with 0 shares should revert
+		vm.expectRevert(TokenggAVAX.ZeroSharesToBurn.selector);
+		ggAVAX.donateYield(0, "DONATION");
+	}
+
+	function testDonateYieldInsufficientShares() public {
+		// Setup: User has some shares but tries to burn more
+		uint256 depositAmount = 100 ether;
+		address donor = getActorWithTokens("donor", uint128(depositAmount), 0);
+
+		vm.prank(donor);
+		ggAVAX.depositAVAX{value: depositAmount}();
+
+		// Test: Try to burn more shares than user has
+		uint256 sharesToBurn = depositAmount + 1; // More than balance
+
+		vm.expectRevert(TokenggAVAX.InsufficientShares.selector);
+		vm.prank(donor);
+		ggAVAX.donateYield(sharesToBurn, "DONATION");
+	}
+
+	function testWithdrawForStaking() public {
+		// Setup: Enable withdrawal for delegation and add multisig
+		vm.startPrank(guardian);
+		store.setBool(keccak256("ProtocolDAO.WithdrawForDelegationEnabled"), true);
+		store.setUint(keccak256("ProtocolDAO.TargetGGAVAXReserveRate"), 0.1 ether); // 10% reserve
+		vm.stopPrank();
+
+		// Add liquidity to the contract
+		uint256 depositAmount = 1000 ether;
+		address liquidStaker = getActorWithTokens("liquidStaker", uint128(depositAmount), 0);
+		vm.prank(liquidStaker);
+		ggAVAX.depositAVAX{value: depositAmount}();
+
+		uint256 withdrawAmount = 100 ether;
+		uint256 stakingAssetsBefore = ggAVAX.stakingTotalAssets();
+		uint256 multisigBalanceBefore = address(rialto).balance;
+
+		// Test: Multisig withdraws for delegation
+		vm.expectEmit(true, false, false, true);
+		emit WithdrawnForStaking(bytes32("DELEGATION"), address(rialto), withdrawAmount);
+
+		vm.prank(address(rialto)); // rialto is a multisig
+		ggAVAX.withdrawForStaking(withdrawAmount, bytes32("DELEGATION"));
+
+		// Verify: stakingTotalAssets increased, AVAX transferred to multisig
+		assertEq(ggAVAX.stakingTotalAssets(), stakingAssetsBefore + withdrawAmount);
+		assertEq(address(rialto).balance, multisigBalanceBefore + withdrawAmount);
+	}
+
+	function testWithdrawForStakingDisabled() public {
+		// Setup: Disable withdrawal for delegation
+		vm.prank(guardian);
+		store.setBool(keccak256("ProtocolDAO.WithdrawForDelegationEnabled"), false);
+
+		// Test: Try to withdraw when disabled
+		vm.expectRevert(TokenggAVAX.WithdrawForStakingDisabled.selector);
+		vm.prank(address(rialto));
+		ggAVAX.withdrawForStaking(100 ether, bytes32("DELEGATION"));
+	}
+
+	function testWithdrawForStakingAmountTooLarge() public {
+		// Setup: Enable withdrawal but create scenario with limited available funds
+		vm.startPrank(guardian);
+		store.setBool(keccak256("ProtocolDAO.WithdrawForDelegationEnabled"), true);
+		store.setUint(keccak256("ProtocolDAO.TargetGGAVAXReserveRate"), 0.5 ether); // 50% reserve
+		vm.stopPrank();
+
+		// Add limited liquidity
+		uint256 depositAmount = 100 ether;
+		address liquidStaker = getActorWithTokens("liquidStaker", uint128(depositAmount), 0);
+		vm.prank(liquidStaker);
+		ggAVAX.depositAVAX{value: depositAmount}();
+
+		// With 50% reserve, only 50 ether should be available for staking
+		uint256 availableForStaking = ggAVAX.amountAvailableForStaking();
+		assertEq(availableForStaking, 50 ether);
+
+		// Test: Try to withdraw more than available
+		uint256 withdrawAmount = availableForStaking + 1;
+
+		vm.expectRevert(TokenggAVAX.WithdrawAmountTooLarge.selector);
+		vm.prank(address(rialto));
+		ggAVAX.withdrawForStaking(withdrawAmount, bytes32("DELEGATION"));
+	}
+
 	function receiveWithdrawalAVAX() external payable {}
 
 	function printState(string memory message) internal view {
@@ -709,5 +1082,204 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 
 		console.log("---rewards---");
 		console.log("lastRewardsAmt", ggAVAX.lastRewardsAmt() / 1 ether);
+	}
+
+	function testDepositYieldWithZeroFees() public {
+		// Set up: Set fee to 0
+		vm.prank(guardian);
+		store.setUint(keccak256("ProtocolDAO.FeeBips"), 0);
+
+		// Set up initial deposit
+		uint256 depositAmt = 100 ether;
+		address liqStaker = getActorWithTokens("liqStaker", uint128(depositAmt), 0 ether);
+		vm.startPrank(liqStaker);
+		wavax.approve(address(ggAVAX), depositAmt);
+		ggAVAX.deposit(depositAmt, liqStaker);
+		vm.stopPrank();
+
+		// Record initial state
+		uint256 initialWAVAXBalance = wavax.balanceOf(address(ggAVAX));
+
+		// Test depositYield
+		uint256 yieldAmount = 10 ether;
+		address yieldProvider = getActorWithTokens("yieldProvider", uint128(yieldAmount), 0 ether);
+		bytes32 source = bytes32("TEST_YIELD");
+
+		// When fee is 0, FeeCollected event should not be emitted
+		vm.expectEmit(true, true, false, true);
+		emit DepositedAdditionalYield(source, yieldProvider, yieldAmount, 0);
+
+		vm.prank(yieldProvider);
+		ggAVAX.depositYield{value: yieldAmount}(source);
+
+		// Verify results
+		assertEq(wavax.balanceOf(address(ggAVAX)), initialWAVAXBalance + yieldAmount);
+		assertEq(vault.balanceOf("ClaimProtocolDAO"), 0);
+	}
+
+	function testDepositYieldWithNonZeroFees() public {
+		// Set up: Set fee to 10% (1000 bips)
+		vm.prank(guardian);
+		store.setUint(keccak256("ProtocolDAO.FeeBips"), 1000);
+
+		// Set up initial deposit
+		uint256 depositAmt = 100 ether;
+		address liqStaker = getActorWithTokens("liqStaker", uint128(depositAmt), 0 ether);
+		vm.startPrank(liqStaker);
+		wavax.approve(address(ggAVAX), depositAmt);
+		ggAVAX.deposit(depositAmt, liqStaker);
+		vm.stopPrank();
+
+		// Record initial state
+		uint256 initialWAVAXBalance = wavax.balanceOf(address(ggAVAX));
+		uint256 initialProtocolDAOBalance = vault.balanceOf("ClaimProtocolDAO");
+
+		// Test depositYield
+		uint256 yieldAmount = 10 ether;
+		uint256 expectedFee = yieldAmount.mulDivDown(1000, 10000); // 10%
+		address yieldProvider = getActorWithTokens("yieldProvider", uint128(yieldAmount), 0 ether);
+		bytes32 source = bytes32("MEV_YIELD");
+
+		// Expect events
+		vm.expectEmit(true, false, false, true);
+		emit FeeCollected(source, expectedFee);
+		vm.expectEmit(true, true, false, true);
+		emit DepositedAdditionalYield(source, yieldProvider, yieldAmount, expectedFee);
+
+		vm.prank(yieldProvider);
+		ggAVAX.depositYield{value: yieldAmount}(source);
+
+		// Verify results
+		assertEq(wavax.balanceOf(address(ggAVAX)), initialWAVAXBalance + yieldAmount - expectedFee);
+		assertEq(vault.balanceOf("ClaimProtocolDAO"), initialProtocolDAOBalance + expectedFee);
+	}
+
+	function testDepositYieldMultipleSources() public {
+		// Set up: Set fee to 5% (500 bips)
+		vm.prank(guardian);
+		store.setUint(keccak256("ProtocolDAO.FeeBips"), 500);
+
+		// Test multiple yield deposits from different sources
+		uint256[] memory yieldAmounts = new uint256[](3);
+		yieldAmounts[0] = 5 ether;
+		yieldAmounts[1] = 8 ether;
+		yieldAmounts[2] = 3 ether;
+
+		bytes32[] memory sources = new bytes32[](3);
+		sources[0] = bytes32("MEV");
+		sources[1] = bytes32("ARBITRAGE");
+		sources[2] = bytes32("LIQUIDATION");
+
+		uint256 totalYield = 0;
+		uint256 totalFees = 0;
+
+		for (uint256 i = 0; i < yieldAmounts.length; i++) {
+			address provider = getActorWithTokens(string(abi.encodePacked("provider", i)), uint128(yieldAmounts[i]), 0 ether);
+			uint256 fee = yieldAmounts[i].mulDivDown(500, 10000);
+			totalFees += fee;
+			totalYield += yieldAmounts[i] - fee;
+
+			vm.prank(provider);
+			ggAVAX.depositYield{value: yieldAmounts[i]}(sources[i]);
+		}
+
+		// Verify total accumulated yield
+		assertEq(wavax.balanceOf(address(ggAVAX)), totalYield);
+		assertEq(vault.balanceOf("ClaimProtocolDAO"), totalFees);
+	}
+
+	function testDepositYieldZeroAmount() public {
+		// When yield is 0, fee will also be 0 regardless of fee rate
+		vm.prank(guardian);
+		store.setUint(keccak256("ProtocolDAO.FeeBips"), 1000); // 10% fee
+
+		bytes32 source = bytes32("ZERO_TEST");
+
+		// Should emit event with 0 amounts (0 * 10% = 0 fee)
+		vm.expectEmit(true, true, false, true);
+		emit DepositedAdditionalYield(source, alice, 0, 0);
+
+		vm.prank(alice);
+		ggAVAX.depositYield{value: 0}(source);
+
+		// Should complete without reverting
+		assertEq(wavax.balanceOf(address(ggAVAX)), 0);
+		assertEq(vault.balanceOf("ClaimProtocolDAO"), 0);
+	}
+
+	function testDepositYieldZeroAmountZeroFee() public {
+		// When both fee and yield are 0, it should work now that the fix is in place
+		vm.prank(guardian);
+		store.setUint(keccak256("ProtocolDAO.FeeBips"), 0); // 0% fee
+
+		bytes32 source = bytes32("ZERO_TEST");
+
+		// Should emit event with 0 amounts
+		vm.expectEmit(true, true, false, true);
+		emit DepositedAdditionalYield(source, alice, 0, 0);
+
+		vm.prank(alice);
+		ggAVAX.depositYield{value: 0}(source);
+
+		// Should complete without reverting
+		assertEq(wavax.balanceOf(address(ggAVAX)), 0);
+	}
+
+	function testDepositYieldIncreasesValue() public {
+		// Set up: Set fee to 10%
+		vm.prank(guardian);
+		store.setUint(keccak256("ProtocolDAO.FeeBips"), 1000);
+
+		// Initial depositor
+		uint256 depositAmt = 100 ether;
+		address depositor1 = getActorWithTokens("depositor1", uint128(depositAmt), 0 ether);
+		vm.startPrank(depositor1);
+		wavax.approve(address(ggAVAX), depositAmt);
+		uint256 shares1 = ggAVAX.deposit(depositAmt, depositor1);
+		vm.stopPrank();
+
+		// Record initial conversion rate
+		uint256 initialAssetsPerShare = ggAVAX.convertToAssets(1 ether);
+		assertEq(initialAssetsPerShare, 1 ether); // Should be 1:1 initially
+
+		// Deposit yield
+		uint256 yieldAmount = 20 ether;
+		uint256 feeAmount = yieldAmount.mulDivDown(1000, 10000); // 10%
+		uint256 netYield = yieldAmount - feeAmount;
+		address yieldProvider = getActorWithTokens("yieldProvider", uint128(yieldAmount), 0 ether);
+
+		vm.prank(yieldProvider);
+		ggAVAX.depositYield{value: yieldAmount}(bytes32("YIELD_TEST"));
+
+		// The yield is now in the contract but not yet reflected in totalAssets
+		// We need to sync rewards to distribute it
+		vm.warp(ggAVAX.rewardsCycleEnd());
+		ggAVAX.syncRewards();
+
+		// Now wait for rewards to be fully distributed
+		vm.warp(ggAVAX.rewardsCycleEnd());
+
+		// Check that assets per share increased
+		uint256 newAssetsPerShare = ggAVAX.convertToAssets(1 ether);
+		assertGt(newAssetsPerShare, initialAssetsPerShare);
+
+		// Verify the yield was distributed correctly
+		uint256 expectedTotalAssets = depositAmt + netYield;
+		assertEq(ggAVAX.totalAssets(), expectedTotalAssets);
+
+		// Verify depositor1's shares are now worth more
+		uint256 depositor1Assets = ggAVAX.convertToAssets(shares1);
+		assertGt(depositor1Assets, depositAmt);
+		assertEq(depositor1Assets, expectedTotalAssets); // They own all shares
+
+		// New depositor should get fewer shares for the same amount due to increased value
+		address depositor2 = getActorWithTokens("depositor2", uint128(depositAmt), 0 ether);
+		vm.startPrank(depositor2);
+		wavax.approve(address(ggAVAX), depositAmt);
+		uint256 shares2 = ggAVAX.deposit(depositAmt, depositor2);
+		vm.stopPrank();
+
+		// depositor2 should get fewer shares than depositor1 got initially
+		assertLt(shares2, shares1);
 	}
 }

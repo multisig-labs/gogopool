@@ -3,7 +3,7 @@ test = "test"
 out = "artifacts-forge"
 # via_ir = true
 optimizer = true
-optimizer_runs = 1_000
+optimizer_runs = 500
 gas-reports = ["*"]
 solc-version = "0.8.17"
 verbosity = 2
@@ -13,6 +13,21 @@ remappings = [
 ]
 src = "contracts"
 exclude = ["contracts/contract/previousVersions/**/*.sol"]
+
+[profile.lint]
+ignore = ["**/test/**/*", "*Mock*"]
+severity = ["high", "med", "low"] # All options are high, med, low, info, gas
+
+[invariant]
+runs = 256
+depth = 15
+fail_on_revert = false
+call_override = false
+dictionary_weight = 80
+include_storage = true
+include_push_bytes = true
+show_metrics = true
+
 # [profile.lite.optimizer_details.yulDetails]
 # optimizerSteps = ''
 
