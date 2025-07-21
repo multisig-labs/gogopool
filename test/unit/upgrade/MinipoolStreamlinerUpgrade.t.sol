@@ -48,7 +48,7 @@ contract MinipoolStreamlinerUpgradeTest is BaseTest {
 	TransparentUpgradeableProxy public transparentProxy;
 
 	function setUp() public override {
-		uint256 fork = vm.createFork(vm.envString("FORK_URL"));
+		uint256 fork = vm.createFork(vm.envOr("FORK_URL", string("https://api.avax.network/ext/bc/C/rpc")));
 		vm.selectFork(fork);
 		super.setUp();
 

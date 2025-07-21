@@ -45,6 +45,9 @@ contract UpgradeTokenggAVAX is Script, EnvironmentConfig {
 		// Generate multisig transaction data
 		generateMultisigTransactionData(guardian);
 
+		// Run integration tests
+		runIntegrationTests();
+
 		vm.stopBroadcast();
 	}
 
@@ -69,13 +72,20 @@ contract UpgradeTokenggAVAX is Script, EnvironmentConfig {
 		console2.log("WithdrawQueue proxy deployed at", address(withdrawQueueProxy));
 		console2.log("Default admin (deployer):", deployer);
 
-		// Grant roles
+		// Grant roles and configure WithdrawQueue
 		{
 			WithdrawQueue withdrawQueue = WithdrawQueue(payable(address(withdrawQueueProxy)));
 			withdrawQueue.grantRole(withdrawQueue.DEPOSITOR_ROLE(), address(depositor));
 			withdrawQueue.grantRole(withdrawQueue.DEFAULT_ADMIN_ROLE(), address(guardian));
+
+			// Configure maxPendingRequestsLimit
+			uint256 maxPendingRequests = vm.envUint("MAX_PENDING_REQUESTS_LIMIT");
+			withdrawQueue.setMaxPendingRequestsLimit(maxPendingRequests);
+			console2.log("MaxPendingRequestsLimit set to:", maxPendingRequests);
+
 			withdrawQueue.renounceRole(withdrawQueue.DEFAULT_ADMIN_ROLE(), address(deployer));
 		}
+		withdrawQueueProxyAdmin.transferOwnership(guardian);
 
 		saveAddress("WithdrawQueueImpl", address(withdrawQueueImpl));
 		saveAddress("WithdrawQueue", address(withdrawQueueProxy));
@@ -120,6 +130,7 @@ contract UpgradeTokenggAVAX is Script, EnvironmentConfig {
 
 		TokenpstAVAX tokenpstAVAX = TokenpstAVAX(payable(address(tokenpstAVAXProxy)));
 		tokenpstAVAX.transferOwnership(guardian);
+		tokenpstAVAXProxyAdmin.transferOwnership(guardian);
 
 		saveAddress("TokenpstAVAXImpl", address(tokenpstAVAXImpl));
 		saveAddress("TokenpstAVAX", address(tokenpstAVAXProxy));
@@ -146,11 +157,7 @@ contract UpgradeTokenggAVAX is Script, EnvironmentConfig {
 			abi.encodeWithSelector(TokenggAVAX.reinitialize.selector, guardian)
 		);
 
-		bytes memory timelockData = abi.encodeWithSelector(
-			Timelock.queueTransaction.selector,
-			getAddress("TokenggAVAXAdmin"),
-			upgradeCallData
-		);
+		bytes memory timelockData = abi.encodeWithSelector(Timelock.queueTransaction.selector, getAddress("TokenggAVAXAdmin"), upgradeCallData);
 
 		console2.log("1. Queue the upgrade transaction with timelock:");
 		console2.log("   To (timelock):", getAddress("Timelock"));
@@ -162,13 +169,10 @@ contract UpgradeTokenggAVAX is Script, EnvironmentConfig {
 		TokenggAVAX newImpl = TokenggAVAX(payable(getAddress("TokenggAVAXImpl")));
 		bytes32 withdrawQueueRole = newImpl.WITHDRAW_QUEUE_ROLE();
 		bytes32 stakerRole = newImpl.STAKER_ROLE();
+		bytes32 defaultAdminRole = newImpl.DEFAULT_ADMIN_ROLE();
 
 		// 2. Grant withdraw queue role
-		bytes memory grantWithdrawQueueRole = abi.encodeWithSelector(
-			TokenggAVAX.grantRole.selector,
-			withdrawQueueRole,
-			getAddress("WithdrawQueue")
-		);
+		bytes memory grantWithdrawQueueRole = abi.encodeWithSelector(TokenggAVAX.grantRole.selector, withdrawQueueRole, getAddress("WithdrawQueue"));
 
 		console2.log("\n2. Grant withdraw queue role:");
 		console2.log("   To (TokenggAVAX):", getAddress("TokenggAVAX"));
@@ -177,17 +181,22 @@ contract UpgradeTokenggAVAX is Script, EnvironmentConfig {
 		console2.logBytes(grantWithdrawQueueRole);
 
 		// 3. Grant staker role
-		bytes memory grantStakerRole = abi.encodeWithSelector(
-			TokenggAVAX.grantRole.selector,
-			stakerRole,
-			vm.envAddress("STAKER_ROLE_RECIPIENT")
-		);
+		bytes memory grantStakerRole = abi.encodeWithSelector(TokenggAVAX.grantRole.selector, stakerRole, vm.envAddress("STAKER_ROLE_RECIPIENT"));
 
 		console2.log("\n3. Grant staker role:");
 		console2.log("   To (TokenggAVAX):", getAddress("TokenggAVAX"));
 		console2.log("   Value: 0");
 		console2.log("   Data:");
 		console2.logBytes(grantStakerRole);
+
+		// 4. Grant default admin role
+		bytes memory grantDefaultAdminRole = abi.encodeWithSelector(TokenggAVAX.grantRole.selector, defaultAdminRole, guardian);
+
+		console2.log("\n4. Grant default admin role:");
+		console2.log("   To (TokenggAVAX):", getAddress("TokenggAVAX"));
+		console2.log("   Value: 0");
+		console2.log("   Data:");
+		console2.logBytes(grantDefaultAdminRole);
 	}
 
 	function generateProtocolDAOUpgradeData() internal {
@@ -200,10 +209,79 @@ contract UpgradeTokenggAVAX is Script, EnvironmentConfig {
 			getAddress("ProtocolDAO")
 		);
 
-		console2.log("4. Upgrade ProtocolDAO:");
+		console2.log("\n5. Upgrade ProtocolDAO:");
 		console2.log("   To (ProtocolDAO):", vm.envAddress("PROTOCOL_DAO"));
 		console2.log("   Value: 0");
 		console2.log("   Data:");
 		console2.logBytes(registerProtocolDAOData);
+	}
+
+	function runIntegrationTests() internal {
+		console2.log("\n=== RUNNING INTEGRATION TESTS ===");
+
+		// Test 1: WithdrawQueue + TokenggAVAX basic integration
+		testWithdrawQueueIntegration();
+
+		// Test 2: TokenpstAVAX + WithdrawQueue integration
+		testTokenpstAVAXIntegration();
+
+		console2.log("Integration tests completed successfully");
+	}
+
+	function testWithdrawQueueIntegration() internal {
+		console2.log("\n--- Testing WithdrawQueue Integration ---");
+
+		WithdrawQueue withdrawQueue = WithdrawQueue(payable(getAddress("WithdrawQueue")));
+
+		// Verify WithdrawQueue can see TokenggAVAX
+		address withdrawQueueTokenggAVAX = address(withdrawQueue.tokenggAVAX());
+		require(withdrawQueueTokenggAVAX == getAddress("TokenggAVAX"), "WithdrawQueue tokenggAVAX address mismatch");
+		console2.log("._/ WithdrawQueue correctly references TokenggAVAX");
+
+		// Verify delays are set correctly
+		uint48 expectedUnstakeDelay = uint48(vm.envUint("UNSTAKE_DELAY"));
+		uint48 expectedExpirationDelay = uint48(vm.envUint("EXPIRATION_DELAY"));
+
+		require(withdrawQueue.unstakeDelay() == expectedUnstakeDelay, "Unstake delay mismatch");
+		require(withdrawQueue.expirationDelay() == expectedExpirationDelay, "Expiration delay mismatch");
+		console2.log("._/ WithdrawQueue delays set correctly");
+
+		// Verify max pending requests limit
+		uint256 expectedMaxPending = vm.envUint("MAX_PENDING_REQUESTS_LIMIT");
+		require(withdrawQueue.getMaxPendingRequestsLimit() == expectedMaxPending, "Max pending requests limit mismatch");
+		console2.log("._/ WithdrawQueue max pending requests limit set correctly");
+
+		// Verify depositor role
+		address depositor = vm.envAddress("DEPOSITOR_ROLE_RECIPIENT");
+		require(withdrawQueue.hasRole(withdrawQueue.DEPOSITOR_ROLE(), depositor), "Depositor role not granted");
+		console2.log("._/ WithdrawQueue depositor role granted correctly");
+	}
+
+	function testTokenpstAVAXIntegration() internal {
+		console2.log("\n--- Testing TokenpstAVAX Integration ---");
+
+		TokenpstAVAX tokenpstAVAX = TokenpstAVAX(payable(getAddress("TokenpstAVAX")));
+
+		// Verify TokenpstAVAX references correct vault (TokenggAVAX)
+		require(tokenpstAVAX.vault() == getAddress("TokenggAVAX"), "TokenpstAVAX vault address mismatch");
+		console2.log("._/ TokenpstAVAX correctly references TokenggAVAX as vault");
+
+		// Verify TokenpstAVAX references correct withdraw queue
+		require(tokenpstAVAX.withdrawQueue() == getAddress("WithdrawQueue"), "TokenpstAVAX withdrawQueue address mismatch");
+		console2.log("._/ TokenpstAVAX correctly references WithdrawQueue");
+
+		// Verify underlying asset is correct
+		TokenggAVAX tokenggAVAX = TokenggAVAX(payable(getAddress("TokenggAVAX")));
+		require(tokenpstAVAX.underlyingAsset() == address(tokenggAVAX.asset()), "TokenpstAVAX underlying asset mismatch");
+		console2.log("._/ TokenpstAVAX underlying asset is correct");
+
+		// Verify ownership
+		address guardian = vm.envAddress("GUARDIAN");
+		require(tokenpstAVAX.owner() == guardian, "TokenpstAVAX owner not guardian");
+		console2.log("._/ TokenpstAVAX ownership transferred to guardian");
+
+		// Verify contract is not paused
+		require(!tokenpstAVAX.paused(), "TokenpstAVAX should not be paused");
+		console2.log("._/ TokenpstAVAX is not paused");
 	}
 }

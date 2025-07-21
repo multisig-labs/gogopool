@@ -21,7 +21,7 @@ contract WithdrawQueueTest is BaseTest {
 	event ExpiredSharesReturned(uint256 indexed requestId, address indexed requester, uint256 shares);
 	event RequestCancelled(uint256 indexed requestId, address indexed requester, uint256 shares);
 	event ExcessSharesBurnt(uint256 indexed requestId, uint256 sharesBurnt);
-	event BatchExpiredFundsReclaimed(uint256 totalAmount, uint256 requestsProcessed);
+	event BatchExpiredFundsReclaimed(address indexed requester, uint256 totalAmount, uint256 requestsProcessed);
 	event ContractInitialized(address indexed tokenggAVAX, uint48 unstakeDelay, uint48 expirationDelay);
 
 	function setUp() public override {
@@ -82,13 +82,13 @@ contract WithdrawQueueTest is BaseTest {
 	function testSetUnstakeDelay() public {
 		// Test initial value
 		assertEq(withdrawQueue.unstakeDelay(), UNSTAKE_DELAY);
-		
+
 		// Test setter (only admin can set)
 		uint48 newDelay = 10 days;
 		vm.prank(guardian);
 		withdrawQueue.setUnstakeDelay(newDelay);
 		assertEq(withdrawQueue.unstakeDelay(), newDelay);
-		
+
 		// Test that non-admin cannot set
 		vm.prank(alice);
 		vm.expectRevert();
@@ -98,13 +98,13 @@ contract WithdrawQueueTest is BaseTest {
 	function testSetExpirationDelay() public {
 		// Test initial value
 		assertEq(withdrawQueue.expirationDelay(), EXPIRATION_DELAY);
-		
+
 		// Test setter (only admin can set)
 		uint48 newDelay = 21 days;
 		vm.prank(guardian);
 		withdrawQueue.setExpirationDelay(newDelay);
 		assertEq(withdrawQueue.expirationDelay(), newDelay);
-		
+
 		// Test that non-admin cannot set
 		vm.prank(alice);
 		vm.expectRevert();
@@ -636,11 +636,13 @@ contract WithdrawQueueTest is BaseTest {
 		uint256 expectedAmount = withdrawQueue.getRequestInfo(requestId).allocatedFunds;
 
 		// Expect BatchExpiredFundsReclaimed event
-		vm.expectEmit(false, false, false, true);
-		emit BatchExpiredFundsReclaimed(expectedAmount, 1);
+		vm.expectEmit(true, false, false, true);
+		emit BatchExpiredFundsReclaimed(alice, expectedAmount, 1);
 
 		// Reclaim expired funds
+		vm.startPrank(alice);
 		(uint256 reclaimedAmount, uint256 processedCount) = withdrawQueue.reclaimExpiredFunds(10);
+		vm.stopPrank();
 
 		// Verify event data matches
 		assertEq(reclaimedAmount, expectedAmount);

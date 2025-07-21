@@ -22,7 +22,7 @@ contract TestFailure is BaseTest {
 
 	function setUp() public override {
 		super.setUp();
-		uint256 fork = vm.createFork(vm.envString("FORK_URL"));
+		uint256 fork = vm.createFork(vm.envOr("FORK_URL", string("https://api.avax.network/ext/bc/C/rpc")));
 		vm.selectFork(fork);
 
 		subnetHardwareRentalMapping = SubnetHardwareRentalMapping(0x1c2DCA76502eb24cD9F98C5Cc8eAeE46D2685Edd);
