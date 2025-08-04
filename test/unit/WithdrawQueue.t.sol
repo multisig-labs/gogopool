@@ -1981,6 +1981,35 @@ contract WithdrawQueueTest is BaseTest {
 
 		console2.log("WithdrawQueue.depositFromStaking (fulfilling remaining 5 requests) gas:", gasUsed2);
 	}
+
+	function testFixBoundsChecking() public {
+		// Test that the HYP-3 fix properly handles cases where proRated amounts
+		// exceed the provided baseAmt/rewardAmt parameters
+
+		// Setup: Create unstake request and reduce ggAVAX liquidity
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 20 ether}();
+
+		uint256 unstakeAmount = 20 ether;
+		vm.startPrank(alice);
+		ggAVAX.approve(address(withdrawQueue), unstakeAmount);
+		uint256 requestId = withdrawQueue.requestUnstake(unstakeAmount);
+		vm.stopPrank();
+
+		// Give contract existing balance and reduce ggAVAX liquidity
+		vm.deal(address(withdrawQueue), 15 ether);
+		vm.prank(address(minipoolMgr));
+		ggAVAX.withdrawForStaking(20 ether);
+
+		// Call with small amounts that would have caused OutOfFunds before fix
+		uint256 baseAmt = 2 ether;
+		uint256 rewardAmt = 1 ether;
+
+		// This should succeed (would have failed with OutOfFunds before fix)
+		vm.deal(charlie, baseAmt + rewardAmt);
+		vm.prank(charlie);
+		withdrawQueue.depositFromStaking{value: 3 ether}(baseAmt, rewardAmt, bytes32("HYP3_FIX_TEST"));
+	}
 }
 
 // Malicious contract that attempts reentrancy

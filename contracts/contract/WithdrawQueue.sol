@@ -371,10 +371,17 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 				uint256 proRatedRewardAmt = amountToDeposit.mulWadDown(rewardToBaseRatio);
 				uint256 proRatedBaseAmt = amountToDeposit - proRatedRewardAmt;
 
-				if (baseAmt > 0) {
+				if (proRatedBaseAmt > baseAmt ) {
+					baseAmt = 0;
+				}
+				else {
 					baseAmt -= proRatedBaseAmt;
 				}
-				if (rewardAmt > 0) {
+
+				if (proRatedRewardAmt > rewardAmt) {
+					rewardAmt = 0;
+				}
+				else {
 					rewardAmt -= proRatedRewardAmt;
 				}
 
