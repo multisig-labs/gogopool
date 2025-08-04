@@ -35,6 +35,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	error InsufficientShares();
 	error WithdrawAmountTooLarge();
 	error WithdrawForStakingDisabled();
+	error CannotGrantDefaultAdminRole();
 	error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
 
 	event NewRewardsCycle(uint256 indexed cycleEnd, uint256 rewardsAmt);
@@ -396,6 +397,9 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	/// @param role The role identifier
 	/// @param account The account to grant the role to
 	function grantRole(bytes32 role, address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
+		if (role == DEFAULT_ADMIN_ROLE) {
+			revert CannotGrantDefaultAdminRole();
+		}
 		_grantRole(role, account);
 	}
 
@@ -443,12 +447,6 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 		_pendingAdmin = address(0);
 
 		emit AdminTransferCanceled(msg.sender, canceledPendingAdmin);
-	}
-
-	/// @notice Renounce admin role - only if there's a pending admin
-	function renounceAdmin() public onlyRole(DEFAULT_ADMIN_ROLE) {
-		require(_pendingAdmin != address(0), "Must have pending admin to renounce");
-		_revokeRole(DEFAULT_ADMIN_ROLE, msg.sender);
 	}
 
 	/// @notice Max assets an owner can deposit
