@@ -64,6 +64,8 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	event BatchExpiredFundsReclaimed(address indexed requester, uint256 totalAmount, uint256 requestsProcessed);
 	event QueueCleaned(bytes32 indexed reason, uint256 indexed requestId);
 	event ContractInitialized(address indexed tokenggAVAX, uint48 unstakeDelay, uint48 expirationDelay);
+	event InsufficientLiquidity(uint256 availableAssets, uint256 requiredAssets);
+	event PendingRequestsNotProcesses(uint256 pendingRequests);
 
 	error DirectAVAXDepositsNotSupported();
 	error InsufficientAVAXBalance();
@@ -365,6 +367,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 			uint256 withdrawQueueAvailableAssets = address(this).balance > totalAllocatedFunds ? address(this).balance - totalAllocatedFunds : 0;
 			if (withdrawQueueAvailableAssets + ggAVAXAvailableAssets < req.expectedAssets) {
+				emit InsufficientLiquidity(withdrawQueueAvailableAssets + ggAVAXAvailableAssets, req.expectedAssets);
 				return;
 			}
 
@@ -380,6 +383,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 				}
 
 				if (depositAmountIncludingFees > withdrawQueueAvailableAssets) {
+					emit InsufficientLiquidity(withdrawQueueAvailableAssets, depositAmountIncludingFees);
 					return;
 				}
 
@@ -423,14 +427,23 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 					excessAVAX += assetsReturned - req.expectedAssets;
 				}
 				requestsProcessed++;
-			} catch {
-				// stAVAX doesn't have enough liquidity for this request, stop processing
-				// Leave this request in the pending set for next time
-				break;
+			} catch (bytes memory reason) {
+				// Check if this is specifically an insufficient liquidity error
+				if (reason.length >= 4 && bytes4(reason) == TokenggAVAX.InsufficientLiquidity.selector) {
+					// stAVAX doesn't have enough liquidity for this request, stop processing
+					// Leave this request in the pending set for next time
+					break;
+				}
+				// For other errors, bubble up rather than assuming liquidity issue
+				// This preserves the original error for debugging
+				assembly {
+					revert(add(reason, 0x20), mload(reason))
+				}
 			}
 		}
 
 		if (pendingRequests.length() != 0) {
+			emit PendingRequestsNotProcesses(pendingRequests.length());
 			return;
 		}
 

@@ -37,6 +37,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	error WithdrawForStakingDisabled();
 	error CannotGrantDefaultAdminRole();
 	error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
+	error InsufficientLiquidity();
 
 	event NewRewardsCycle(uint256 indexed cycleEnd, uint256 rewardsAmt);
 	event DepositedFromStaking(bytes32 indexed source, address indexed caller, uint256 baseAmt, uint256 rewardsAmt);
@@ -366,6 +367,12 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 		if ((assets = previewRedeem(shares)) == 0) {
 			revert ZeroAssets();
 		}
+
+		// Check liquidity before attempting withdrawal to avoid gas-related failures being misinterpreted
+		if (IWAVAX(address(asset)).balanceOf(address(this)) < assets) {
+			revert InsufficientLiquidity();
+		}
+
 		beforeWithdraw(assets, shares);
 		_burn(msg.sender, shares);
 

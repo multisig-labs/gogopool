@@ -1282,4 +1282,45 @@ contract TokenggAVAXTest is BaseTest, IWithdrawer {
 		// depositor2 should get fewer shares than depositor1 got initially
 		assertLt(shares2, shares1);
 	}
+
+	function testCurrentErrorOnInsufficientLiquidity() public {
+		alice = getActorWithTokens("alice", 100 ether, 100 ether);
+
+		vm.startPrank(guardian);
+		ggAVAX.grantRole(ggAVAX.WITHDRAW_QUEUE_ROLE(), alice);
+		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), alice);
+		dao.setWithdrawForDelegationEnabled(true);
+		store.setUint(keccak256("ProtocolDAO.TargetGGAVAXReserveRate"), 0 ether);
+
+		vm.stopPrank();
+
+		// 1. Alice deposits AVAX to get ggAVAX shares
+		vm.startPrank(alice);
+		uint256 depositAmount = 50 ether;
+		ggAVAX.depositAVAX{value: depositAmount}();
+		uint256 shares = ggAVAX.balanceOf(alice);
+		vm.stopPrank();
+
+		// 2. Drain all WAVAX from the contract (simulating insufficient liquidity)
+		vm.startPrank(alice);
+		ggAVAX.withdrawForStaking(50 ether, bytes32("TEST_YIELD"));
+		vm.stopPrank();
+
+
+		// 3. Try to redeem - this should show us the current error
+		vm.startPrank(alice);
+		try ggAVAX.redeemAVAX(shares) {
+			revert("Should have failed");
+		} catch Error(string memory reason) {
+			console2.log("Error string:", reason);
+		} catch Panic(uint errorCode) {
+			console2.log("Panic code:", errorCode);
+		} catch (bytes memory lowLevelData) {
+			console2.log("Low level error data length:", lowLevelData.length);
+			if (lowLevelData.length > 0) {
+				console2.logBytes(lowLevelData);
+			}
+		}
+		vm.stopPrank();
+	}
 }
