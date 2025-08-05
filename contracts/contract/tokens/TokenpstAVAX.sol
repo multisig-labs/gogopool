@@ -168,6 +168,8 @@ contract TokenpstAVAX is ERC20Upgradeable, OwnableUpgradeable, PausableUpgradeab
 
 		if (ggAVAXTotalAssets <= totalPstTokens) return 0; // No excess if no yield
 
+		if (pstAVAXVaultShares * ggAVAXTotalAssets < totalPstTokens * ggAVAXTotalShares) return 0;
+
 		uint256 numerator = pstAVAXVaultShares * ggAVAXTotalAssets - totalPstTokens * ggAVAXTotalShares;
 		uint256 denominator = ggAVAXTotalAssets - totalPstTokens;
 
