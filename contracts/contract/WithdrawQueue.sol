@@ -442,13 +442,13 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			}
 		}
 
+		if (excessAVAX > 0) {
+			tokenggAVAX.depositYield{value: excessAVAX}(bytes32("WITHDRAW_QUEUE"));
+		}
+
 		if (pendingRequests.length() != 0) {
 			emit PendingRequestsNotProcesses(pendingRequests.length());
 			return;
-		}
-
-		if (excessAVAX > 0) {
-			tokenggAVAX.depositYield{value: excessAVAX}(bytes32("WITHDRAW_QUEUE"));
 		}
 
 		// Handle any remaining amounts after processing all pending requests
