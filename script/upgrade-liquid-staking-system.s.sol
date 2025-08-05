@@ -67,7 +67,7 @@ contract UpgradeTokenggAVAX is Script, EnvironmentConfig {
 		TransparentUpgradeableProxy withdrawQueueProxy = new TransparentUpgradeableProxy(
 			address(withdrawQueueImpl),
 			address(withdrawQueueProxyAdmin),
-			abi.encodeWithSelector(withdrawQueueImpl.initialize.selector, getAddress("TokenggAVAX"), unstakeDelay, expirationDelay)
+			abi.encodeWithSelector(withdrawQueueImpl.initialize.selector, getAddress("TokenggAVAX"), getAddress("Storage"), unstakeDelay, expirationDelay)
 		);
 		console2.log("WithdrawQueue proxy deployed at", address(withdrawQueueProxy));
 		console2.log("Default admin (deployer):", deployer);

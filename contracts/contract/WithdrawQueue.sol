@@ -3,6 +3,7 @@ pragma solidity 0.8.17;
 
 import {IWAVAX} from "../interface/IWAVAX.sol";
 import {TokenggAVAX} from "./tokens/TokenggAVAX.sol";
+import {Storage} from "./Storage.sol";
 
 import {ERC20} from "@rari-capital/solmate/src/tokens/ERC20.sol";
 
@@ -48,6 +49,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	uint48 public unstakeDelay;
 	uint48 public expirationDelay;
 	TokenggAVAX public tokenggAVAX;
+	Storage public store;
 
 	uint256 private maxPendingRequestsLimit;
 
@@ -89,7 +91,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	/// @param tokenggAVAXAddress The address of the stAVAX token contract
 	/// @param _unstakeDelay How long users must wait before they can claim their AVAX
 	/// @param _expirationDelay How long after claiming period before requests expire
-	function initialize(address payable tokenggAVAXAddress, uint48 _unstakeDelay, uint48 _expirationDelay) public initializer {
+	function initialize(address payable tokenggAVAXAddress, address storageAddress, uint48 _unstakeDelay, uint48 _expirationDelay) public initializer {
 		__ReentrancyGuard_init();
 		__AccessControl_init();
 		_grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
@@ -97,6 +99,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		tokenggAVAX = TokenggAVAX(payable(tokenggAVAXAddress));
 		unstakeDelay = _unstakeDelay;
 		expirationDelay = _expirationDelay;
+		store = Storage(storageAddress);
 
 		emit ContractInitialized(tokenggAVAXAddress, _unstakeDelay, _expirationDelay);
 	}
@@ -367,25 +370,35 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 			// Determine if we need to deposit additional assets to ggAVAX
 			if (ggAVAXAvailableAssets < req.expectedAssets) {
-				uint256 amountToDeposit = req.expectedAssets - ggAVAXAvailableAssets;
-				uint256 proRatedRewardAmt = amountToDeposit.mulWadDown(rewardToBaseRatio);
-				uint256 proRatedBaseAmt = amountToDeposit - proRatedRewardAmt;
+				uint256 depositAmountIncludingFees = req.expectedAssets - ggAVAXAvailableAssets;
 
-				if (proRatedBaseAmt > baseAmt ) {
-					baseAmt = 0;
+				uint256 feeBips = store.getUint(keccak256(abi.encodePacked("ProtocolDAO.FeeBips")));
+
+				if (feeBips > 0 && rewardToBaseRatio > 0) {
+					uint256 scaleFactor = uint256(1 ether).mulDivUp(10000, 10000 - feeBips);
+					depositAmountIncludingFees = depositAmountIncludingFees.mulWadUp(scaleFactor);
 				}
-				else {
+
+				if (depositAmountIncludingFees > withdrawQueueAvailableAssets) {
+					return;
+				}
+
+				uint256 proRatedRewardAmt = depositAmountIncludingFees.mulWadDown(rewardToBaseRatio);
+				uint256 proRatedBaseAmt = depositAmountIncludingFees - proRatedRewardAmt;
+
+				if (proRatedBaseAmt > baseAmt) {
+					baseAmt = 0;
+				} else {
 					baseAmt -= proRatedBaseAmt;
 				}
 
 				if (proRatedRewardAmt > rewardAmt) {
 					rewardAmt = 0;
-				}
-				else {
+				} else {
 					rewardAmt -= proRatedRewardAmt;
 				}
 
-				_depositToGGAVAX(proRatedBaseAmt, proRatedRewardAmt, source, amountToDeposit);
+				_depositToGGAVAX(proRatedBaseAmt, proRatedRewardAmt, source, depositAmountIncludingFees);
 			}
 
 			// Try to redeem all shares from initial request

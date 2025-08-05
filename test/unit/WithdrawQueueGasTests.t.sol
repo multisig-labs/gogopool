@@ -30,7 +30,7 @@ contract WithdrawQueueGasTests is BaseTest {
 		// Deploy WithdrawQueue
 		vm.startPrank(guardian);
 		WithdrawQueue withdrawQueueImpl = new WithdrawQueue();
-		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), UNSTAKE_DELAY, EXPIRATION_DELAY);
+		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), address(store), UNSTAKE_DELAY, EXPIRATION_DELAY);
 		TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(withdrawQueueImpl), address(proxyAdmin), initData);
 		withdrawQueue = WithdrawQueue(payable(address(proxy)));
 

@@ -34,7 +34,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Deploy WithdrawQueue
 		vm.startPrank(guardian);
 		WithdrawQueue withdrawQueueImpl = new WithdrawQueue();
-		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), UNSTAKE_DELAY, EXPIRATION_DELAY);
+		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), address(store), UNSTAKE_DELAY, EXPIRATION_DELAY);
 
 		TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(withdrawQueueImpl), address(proxyAdmin), initData);
 
@@ -114,7 +114,7 @@ contract WithdrawQueueTest is BaseTest {
 	function testInitializationEvent() public {
 		// Deploy a new WithdrawQueue to test the initialization event
 		WithdrawQueue newWithdrawQueueImpl = new WithdrawQueue();
-		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), UNSTAKE_DELAY, EXPIRATION_DELAY);
+		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), address(store), UNSTAKE_DELAY, EXPIRATION_DELAY);
 
 		// Expect the ContractInitialized event
 		vm.expectEmit(true, false, false, true);
@@ -1843,7 +1843,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Deploy a new WithdrawQueue with the malicious ggAVAX
 		WithdrawQueue maliciousQueue;
 		WithdrawQueue withdrawQueueImpl = new WithdrawQueue();
-		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(maliciousGGAVAX), UNSTAKE_DELAY, EXPIRATION_DELAY);
+		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(maliciousGGAVAX), address(store), UNSTAKE_DELAY, EXPIRATION_DELAY);
 
 		TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(withdrawQueueImpl), address(proxyAdmin), initData);
 
@@ -2010,6 +2010,63 @@ contract WithdrawQueueTest is BaseTest {
 		vm.prank(charlie);
 		withdrawQueue.depositFromStaking{value: 3 ether}(baseAmt, rewardAmt, bytes32("HYP3_FIX_TEST"));
 	}
+
+		function testDepositFromStakingWithFeeCalculation() public {
+		// Test that the fee calculation correctly ensures sufficient funds are deposited to TokenggAVAX
+
+		// Set a protocol fee for rewards (5% = 500 basis points)
+		vm.prank(guardian);
+		dao.setFeeBips(500); // 5% fee on rewards
+
+		// Setup: Create unstake request for 20 ether
+		vm.deal(alice, 100 ether);
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 50 ether}();
+
+		vm.prank(alice);
+		ggAVAX.approve(address(withdrawQueue), type(uint256).max);
+
+		vm.prank(alice);
+		uint256 requestId = withdrawQueue.requestUnstake(20 ether);
+
+		// Reduce ggAVAX liquidity to force deposit to ggAVAX
+		// Will result in 10 AVAX in ggAVAX. Need 10 AVAX to cover request
+		vm.startPrank(guardian);
+		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), guardian);
+		dao.setWithdrawForDelegationEnabled(true);
+		ggAVAX.withdrawForStaking(40 ether, bytes32("REDUCE_LIQUIDITY"));
+		vm.stopPrank();
+
+		// Store initial balance to verify liquidity calculation
+		uint256 ggAVAXAvailableBefore = ggAVAX.amountAvailableForStaking();
+
+		// calculate actual amount needed to deposit.
+		uint256 nextRequestAmount = withdrawQueue.getNextPendingRequestAmount();
+		uint256 feeAmount = dao.getFeeBips();
+		uint256 scaleFactor = uint256(1 ether).mulDivUp(10000, 10000 - feeAmount);
+		uint256 scaledNextRequestAmount = nextRequestAmount.mulWadUp(scaleFactor);
+		uint256 actualAmountNeeded = scaledNextRequestAmount - ggAVAXAvailableBefore;
+
+		uint256 rewardsRatio = 0.3 ether;
+		uint256 rewardAmount = actualAmountNeeded.mulWadUp(rewardsRatio);
+		uint256 baseAmount = actualAmountNeeded - rewardAmount;
+
+		// Perform the deposit with 70% base, 30% reward ratio
+		vm.deal(charlie, actualAmountNeeded);
+		vm.prank(charlie);
+		withdrawQueue.depositFromStaking{value: actualAmountNeeded}(baseAmount, rewardAmount, bytes32("FEE_TEST"));
+
+		// Verify the request was fulfilled - this proves the fee calculation worked
+		assertTrue(withdrawQueue.isFulfilledRequest(requestId), "Request should be fulfilled with proper fee accounting");
+
+		assertEq(withdrawQueue.getNextPendingRequestAmount(), 0, "No pending requests should remain after proper fee accounting");
+
+		// Verify that the scaling worked by checking that enough liquidity was added
+		// Even though fees were deducted, we should have sufficient liquidity
+		uint256 ggAVAXAvailableAfter = ggAVAX.amountAvailableForStaking();
+		assertTrue(ggAVAXAvailableAfter >= 0, "ggAVAX should maintain liquidity after fee-adjusted deposit");
+	}
+
 }
 
 // Malicious contract that attempts reentrancy

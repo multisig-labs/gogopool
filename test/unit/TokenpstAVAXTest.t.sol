@@ -19,7 +19,7 @@ contract TokenpstAVAXTest is BaseTest {
 
 		// Deploy WithdrawQueue
 		WithdrawQueue withdrawQueueImpl = new WithdrawQueue();
-		bytes memory withdrawQueueInitData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), 7 days, 14 days);
+		bytes memory withdrawQueueInitData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), address(store), 7 days, 14 days);
 		TransparentUpgradeableProxy withdrawQueueProxy = new TransparentUpgradeableProxy(address(withdrawQueueImpl), address(proxyAdmin), withdrawQueueInitData);
 		withdrawQueue = WithdrawQueue(payable(address(withdrawQueueProxy)));
 
