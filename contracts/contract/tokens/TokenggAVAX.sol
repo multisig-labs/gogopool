@@ -215,26 +215,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	/// @param baseAmt The amount of liquid staker AVAX used to create a minipool
 	/// @param rewardAmt The rewards amount (in AVAX) earned from staking
 	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt) public payable onlySpecificRegisteredContract("MinipoolManager", msg.sender) {
-		ProtocolDAO protocolDAO = ProtocolDAO(getContractAddress("ProtocolDAO"));
-		Vault vault = Vault(getContractAddress("Vault"));
-
-		uint256 totalAmt = msg.value;
-		uint256 feeAmount = rewardAmt.mulDivDown(protocolDAO.getFeeBips(), 10000);
-		rewardAmt -= feeAmount;
-		if (totalAmt != (baseAmt + rewardAmt + feeAmount) || baseAmt > stakingTotalAssets) {
-			revert InvalidStakingDeposit();
-		}
-
-		if (feeAmount > 0) {
-			vault.depositAVAX{value: feeAmount}();
-			vault.transferAVAX("ClaimProtocolDAO", feeAmount);
-			emit FeeCollected(MINIPOOL_SOURCE, feeAmount);
-		}
-
-		stakingTotalAssets -= baseAmt;
-		IWAVAX(address(asset)).deposit{value: totalAmt - feeAmount}();
-
-		emit DepositedFromStaking(MINIPOOL_SOURCE, msg.sender, baseAmt, rewardAmt);
+		_depositFromStaking(baseAmt, rewardAmt, MINIPOOL_SOURCE);
 	}
 
 	/// @notice Allows users to deposit additional yield from activities such as MEV
@@ -242,26 +223,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	/// @param rewardAmt The reward amount from yield activities
 	/// @param source The source of the additional yield (i.e. MEV)
 	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt, bytes32 source) public payable onlyRole(STAKER_ROLE) {
-		ProtocolDAO protocolDAO = ProtocolDAO(getContractAddress("ProtocolDAO"));
-		Vault vault = Vault(getContractAddress("Vault"));
-
-		uint256 totalAmt = msg.value;
-		uint256 feeAmt = rewardAmt.mulDivDown(protocolDAO.getFeeBips(), 10000);
-		rewardAmt -= feeAmt;
-
-		if (totalAmt != (baseAmt + rewardAmt + feeAmt) || baseAmt > stakingTotalAssets) {
-			revert InvalidStakingDeposit();
-		}
-
-		if (feeAmt > 0) {
-			vault.depositAVAX{value: feeAmt}();
-			vault.transferAVAX("ClaimProtocolDAO", feeAmt);
-			emit FeeCollected(source, feeAmt);
-		}
-
-		stakingTotalAssets -= baseAmt;
-		IWAVAX(address(asset)).deposit{value: totalAmt - feeAmt}();
-		emit DepositedFromStaking(source, msg.sender, baseAmt, rewardAmt);
+		_depositFromStaking(baseAmt, rewardAmt, source);
 	}
 
 	/// @notice Allows anyone to deposit yield to the contract
@@ -271,12 +233,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 		uint256 totalAmt = msg.value;
 		uint256 feeAmt = totalAmt.mulDivDown(protocolDAO.getFeeBips(), 10000);
 
-		Vault vault = Vault(getContractAddress("Vault"));
-		if (feeAmt > 0) {
-			vault.depositAVAX{value: feeAmt}();
-			vault.transferAVAX("ClaimProtocolDAO", feeAmt);
-			emit FeeCollected(source, feeAmt);
-		}
+		_collectProtocolFee(feeAmt, source);
 
 		IWAVAX(address(asset)).deposit{value: totalAmt - feeAmt}();
 		emit DepositedAdditionalYield(source, msg.sender, totalAmt, feeAmt);
@@ -526,6 +483,42 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	/// @return uint256 Amount of AVAX required
 	function previewMint(uint256 shares) public view override whenTokenNotPaused(shares) returns (uint256) {
 		return super.previewMint(shares);
+	}
+
+	/// @dev Helper function to handle protocol fee collection for yield/deposit functions
+	/// @param feeAmount The amount of AVAX to collect as fees
+	/// @param source The source of the deposit (for event emission)
+	/// @return The amount of AVAX remaining after fee collection
+	function _collectProtocolFee(uint256 feeAmount, bytes32 source) internal returns (uint256) {
+		if (feeAmount > 0) {
+			Vault vault = Vault(getContractAddress("Vault"));
+			vault.depositAVAX{value: feeAmount}();
+			vault.transferAVAX("ClaimProtocolDAO", feeAmount);
+			emit FeeCollected(source, feeAmount);
+		}
+		return feeAmount;
+	}
+
+	/// @dev Internal function implementing the core deposit from staking logic
+	/// @param baseAmt The base amount being returned from staking/delegation
+	/// @param rewardAmt The reward amount from yield activities
+	/// @param source The source of the deposit (for event emission)
+	function _depositFromStaking(uint256 baseAmt, uint256 rewardAmt, bytes32 source) internal {
+		ProtocolDAO protocolDAO = ProtocolDAO(getContractAddress("ProtocolDAO"));
+
+		uint256 totalAmt = msg.value;
+		uint256 feeAmt = rewardAmt.mulDivDown(protocolDAO.getFeeBips(), 10000);
+		rewardAmt -= feeAmt;
+
+		if (totalAmt != (baseAmt + rewardAmt + feeAmt) || baseAmt > stakingTotalAssets) {
+			revert InvalidStakingDeposit();
+		}
+
+		_collectProtocolFee(feeAmt, source);
+
+		stakingTotalAssets -= baseAmt;
+		IWAVAX(address(asset)).deposit{value: totalAmt - feeAmt}();
+		emit DepositedFromStaking(source, msg.sender, baseAmt, rewardAmt);
 	}
 
 	/// @notice Function prior to a withdraw
