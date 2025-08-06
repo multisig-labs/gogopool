@@ -4,23 +4,33 @@ pragma solidity 0.8.17;
 import "./utils/BaseTest.sol";
 import {TokenpstAVAX} from "../../contracts/contract/tokens/TokenpstAVAX.sol";
 import {WithdrawQueue} from "../../contracts/contract/WithdrawQueue.sol";
+import {console2} from "forge-std/console2.sol";
+import {FixedPointMathLib} from "@rari-capital/solmate/src/utils/FixedPointMathLib.sol";
 
 contract TokenpstAVAXTest is BaseTest {
+	using FixedPointMathLib for uint256;
+
 	TokenpstAVAX pstAVAX;
 	WithdrawQueue withdrawQueue;
 	address alice;
 	address bob;
+	address cam;
 
 	function setUp() public override {
 		super.setUp();
 
 		alice = getActorWithTokens("alice", MAX_AMT, MAX_AMT);
 		bob = getActorWithTokens("bob", MAX_AMT, MAX_AMT);
+		cam = getActorWithTokens("cam", MAX_AMT, MAX_AMT);
 
 		// Deploy WithdrawQueue
 		WithdrawQueue withdrawQueueImpl = new WithdrawQueue();
 		bytes memory withdrawQueueInitData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), address(store), 7 days, 14 days);
-		TransparentUpgradeableProxy withdrawQueueProxy = new TransparentUpgradeableProxy(address(withdrawQueueImpl), address(proxyAdmin), withdrawQueueInitData);
+		TransparentUpgradeableProxy withdrawQueueProxy = new TransparentUpgradeableProxy(
+			address(withdrawQueueImpl),
+			address(proxyAdmin),
+			withdrawQueueInitData
+		);
 		withdrawQueue = WithdrawQueue(payable(address(withdrawQueueProxy)));
 
 		// Deploy
@@ -84,7 +94,6 @@ contract TokenpstAVAXTest is BaseTest {
 		ggAVAX.syncRewards();
 		skip(ggAVAX.rewardsCycleLength());
 
-
 		assertEq(ggAVAX.convertToAssets(ggAVAX.balanceOf(bob)), 1000 ether + 500 ether);
 		assertEq(ggAVAX.convertToAssets(ggAVAX.balanceOf(address(pstAVAX))), 1000 ether + 500 ether);
 
@@ -110,7 +119,12 @@ contract TokenpstAVAXTest is BaseTest {
 		assertEq(assetsLeft, 0);
 	}
 
-	function testStripYield() public {
+	function testStripYieldDefault() public {
+		// we have to create a ggAVAX holder I think
+		uint256 ggAVAXDeposit = 1 ether;
+		vm.prank(bob);
+		ggAVAX.depositAVAX{value: ggAVAXDeposit}();
+
 		uint256 assets = 1 ether;
 		vm.prank(alice);
 		pstAVAX.depositAVAX{value: assets}();
@@ -129,15 +143,14 @@ contract TokenpstAVAXTest is BaseTest {
 
 		vm.stopPrank();
 
-		uint256 pstAVAXInggAVAX = ggAVAX.convertToShares(assets);
-		assertEq(pstAVAX.getExcessShares(), rewardsAmt);
+		assertEq(pstAVAX.getExcessShares(), rewardsAmt / 2);
 
 		vm.prank(alice);
 		pstAVAX.withdraw(assets);
 		assertEq(pstAVAX.balanceOf(alice), 0);
 		assertEq(pstAVAX.totalSupply(), 0);
-		assertEq(ggAVAX.balanceOf(address(pstAVAX)), pstAVAXInggAVAX);
-		assertEq(ggAVAX.balanceOf(alice), pstAVAXInggAVAX);
+		assertEq(ggAVAX.balanceOf(address(pstAVAX)), 0);
+		assertLt(ggAVAX.balanceOf(alice), 1 ether);
 
 		pstAVAX.stripYield();
 		assertEq(pstAVAX.getExcessShares(), 0);
@@ -322,8 +335,8 @@ contract TokenpstAVAXTest is BaseTest {
 	}
 
 	function testStripYieldNoYield() public {
-		vm.expectRevert(TokenpstAVAX.NoYieldToStrip.selector);
-		pstAVAX.stripYield();
+		uint256 excessShares = pstAVAX.stripYield();
+		assertEq(excessShares, 0);
 	}
 
 	function testDepositEvent() public {
@@ -456,6 +469,217 @@ contract TokenpstAVAXTest is BaseTest {
 		assertEq(pstAVAX.totalSupply(), 0);
 		assertEq(pstAVAX.balanceOf(alice), 0);
 		assertEq(pstAVAX.balanceOf(bob), 0);
+	}
+
+	function testNoggAVAXHoldersBeforeRewards() public {
+		assertEq(pstAVAX.totalSupply(), 0);
+		assertEq(ggAVAX.balanceOf(address(pstAVAX)), 0);
+		assertEq(ggAVAX.totalSupply(), 0);
+		assertEq(ggAVAX.totalAssets(), 0);
+
+		uint256 assets = 10 ether;
+		vm.prank(alice);
+		pstAVAX.depositAVAX{value: assets}();
+
+		assertEq(pstAVAX.balanceOf(alice), assets);
+		assertEq(pstAVAX.totalSupply(), assets);
+		assertEq(ggAVAX.balanceOf(address(pstAVAX)), assets);
+
+		// vm.startPrank(cam);
+		// ggAVAX.depositAVAX{value: assets}();
+		// vm.stopPrank();
+
+		// Deposit some rewards to ggAVAX
+		vm.startPrank(bob);
+		uint256 rewardsAmt = 10 ether;
+		wavax.deposit{value: rewardsAmt}();
+		wavax.transfer(address(ggAVAX), rewardsAmt);
+		vm.stopPrank();
+
+		// Warp and sync rewards
+		vm.warp(ggAVAX.rewardsCycleEnd());
+		ggAVAX.syncRewards();
+		vm.warp(ggAVAX.rewardsCycleEnd());
+
+		assertEq(ggAVAX.totalAssets(), assets + rewardsAmt);
+		assertEq(ggAVAX.totalSupply(), assets);
+		assertEq(ggAVAX.convertToShares(1 ether), 0.5 ether);
+
+		// Because there are no other ggAVAX share holders, pstAVAX assumes it can strip
+		// all yield. This is a known issue when there are no ggAVAX holders
+		uint256 sharesStripped = pstAVAX.stripYield();
+		assertEq(sharesStripped, assets);
+
+		// Because all yield was stripped, this call will revert attempting to send
+		// alice an appropraite number of ggAVAX shares
+		vm.startPrank(alice);
+		vm.expectRevert();
+		uint256 sharesWithdrawn = pstAVAX.withdraw(assets);
+		vm.stopPrank();
+	}
+
+	function testOneggAVAXHolderBeforeRewards() public {
+		assertEq(pstAVAX.totalSupply(), 0);
+		assertEq(ggAVAX.balanceOf(address(pstAVAX)), 0);
+		assertEq(ggAVAX.totalSupply(), 0);
+		assertEq(ggAVAX.totalAssets(), 0);
+
+		uint256 pstAVAXDeposit = 10 ether;
+		vm.prank(alice);
+		pstAVAX.depositAVAX{value: pstAVAXDeposit}();
+
+		assertEq(pstAVAX.balanceOf(alice), pstAVAXDeposit);
+		assertEq(pstAVAX.totalSupply(), pstAVAXDeposit);
+		assertEq(ggAVAX.balanceOf(address(pstAVAX)), pstAVAXDeposit);
+
+		vm.startPrank(cam);
+		ggAVAX.depositAVAX{value: pstAVAXDeposit}();
+		vm.stopPrank();
+
+		// Deposit some rewards to ggAVAX
+		vm.startPrank(bob);
+		uint256 rewardsAmt = 10 ether;
+		wavax.deposit{value: rewardsAmt}();
+		wavax.transfer(address(ggAVAX), rewardsAmt);
+		vm.stopPrank();
+
+		// Warp and sync rewards
+		vm.warp(ggAVAX.rewardsCycleEnd());
+		ggAVAX.syncRewards();
+		vm.warp(ggAVAX.rewardsCycleEnd());
+
+		assertEq(ggAVAX.totalAssets(), pstAVAXDeposit + rewardsAmt + pstAVAXDeposit);
+		assertEq(ggAVAX.totalSupply(), pstAVAXDeposit + pstAVAXDeposit);
+		assertEq(ggAVAX.convertToShares(1 ether), ggAVAX.totalSupply().divWadDown(ggAVAX.totalAssets()));
+
+		// Now there is another holder of ggAVAX, so the stippedShares will
+		// not be the full amount of ggAVAX holding in pstAVAX
+		uint256 sharesStripped = pstAVAX.stripYield();
+		assertEq(sharesStripped, rewardsAmt / 2);
+
+		// Alice gets enough ggAVAX back to cover her initial pstAVAX deposit
+		vm.prank(alice);
+		uint256 sharesWithdrawn = pstAVAX.withdraw(pstAVAXDeposit);
+		assertEq(sharesWithdrawn, rewardsAmt / 2);
+		assertEq(ggAVAX.convertToAssets(sharesWithdrawn), pstAVAXDeposit);
+	}
+
+	function testWithdrawalAffectsonExcessShares() public {
+		// Test setup
+		uint256 pstDeposit = 1000 ether;
+		uint256 ggDeposit = 1000 ether;
+		uint256 donation = 100 ether;
+
+		address pstDepositor1 = makeAddr("pstDepositor1");
+		vm.deal(pstDepositor1, 10 * ggDeposit);
+
+		address pstDepositor2 = makeAddr("pstDepositor2");
+		vm.deal(pstDepositor2, 10 * ggDeposit);
+
+		address pstDepositor3 = makeAddr("pstDepositor3");
+		vm.deal(pstDepositor3, 10 * ggDeposit);
+
+		address donater = makeAddr("donater");
+		vm.deal(donater, 10 * ggDeposit);
+
+		address ggDepositor1 = makeAddr("ggDepositor1");
+		vm.deal(ggDepositor1, 10 * ggDeposit);
+
+		address ggDepositor2 = makeAddr("ggDepositor2");
+		vm.deal(ggDepositor2, 10 * ggDeposit);
+
+		assertEq(pstAVAX.totalSupply(), 0);
+		assertEq(ggAVAX.balanceOf(address(pstAVAX)), 0);
+		assertEq(ggAVAX.totalSupply(), 0);
+		assertEq(ggAVAX.totalAssets(), 0);
+
+		vm.prank(pstDepositor1);
+		pstAVAX.depositAVAX{value: pstDeposit}();
+		assertEq(pstAVAX.balanceOf(pstDepositor1), pstDeposit);
+
+		// Deposit avax into ggAVAX
+		vm.prank(ggDepositor1);
+		uint256 ggDepositor1Shares = ggAVAX.depositAVAX{value: ggDeposit}();
+
+		assertEq(ggDepositor1Shares, ggDeposit);
+		assertEq(ggAVAX.totalSupply(), ggDeposit + pstDeposit);
+
+		// Donate some amout of rewards to ggAVAX
+		vm.startPrank(donater);
+		wavax.deposit{value: donation}();
+		wavax.transfer(address(ggAVAX), donation);
+		vm.stopPrank();
+
+		// Warp and sync rewards
+		vm.warp(ggAVAX.rewardsCycleEnd());
+		ggAVAX.syncRewards();
+		vm.warp(ggAVAX.rewardsCycleEnd());
+
+		assertEq(ggAVAX.totalAssets(), ggDeposit + pstDeposit + donation);
+		assertEq(ggAVAX.previewRedeem(1 ether), ggAVAX.totalAssets().divWadDown(ggAVAX.totalSupply()));
+
+		uint256 expectedExcessShares = 90909090909090909090;
+		assertGt(pstAVAX.getExcessShares(), 0);
+		assertEq(pstAVAX.getExcessShares(), expectedExcessShares);
+
+		vm.prank(pstDepositor1);
+		uint256 ggAVAXsharesWithdrawnDepositor1 = pstAVAX.withdraw(pstDeposit);
+
+		assertApproxEqAbs(ggAVAX.convertToAssets(ggAVAXsharesWithdrawnDepositor1), pstDeposit, 1);
+		assertApproxEqAbs(pstAVAX.getExcessShares(), 0, 1);
+		assertApproxEqAbs(pstAVAX.totalSupply(), 0, 1);
+		assertApproxEqAbs(ggAVAX.balanceOf(address(pstAVAX)), 0, 1);
+		assertEq(ggAVAX.totalSupply(), ggDeposit + pstDeposit - expectedExcessShares);
+
+		uint256 sharesStripped = pstAVAX.stripYield();
+		assertApproxEqAbs(sharesStripped, 0, 1);
+
+		vm.prank(pstDepositor2);
+		pstAVAX.depositAVAX{value: pstDeposit}();
+
+		assertEq(pstAVAX.balanceOf(pstDepositor2), pstDeposit);
+		assertEq(pstAVAX.totalSupply(), pstDeposit);
+	}
+
+	function testStripYieldGasMeasurement() public {
+		// Setup scenario with yield to be stripped
+		uint256 assets = 1000 ether;
+
+		// Alice deposits into pstAVAX
+		vm.prank(alice);
+		pstAVAX.depositAVAX{value: assets}();
+
+		// Bob deposits directly into ggAVAX (creates another holder)
+		vm.prank(bob);
+		ggAVAX.depositAVAX{value: assets}();
+
+		// Skip time to allow for rewards
+		skip(ggAVAX.rewardsCycleLength());
+
+		// Add rewards to ggAVAX (simulate yield generation)
+		vm.deal(address(ggAVAX), 1000 ether);
+		vm.prank(address(ggAVAX));
+		wavax.deposit{value: 1000 ether}();
+
+		ggAVAX.syncRewards();
+		skip(ggAVAX.rewardsCycleLength());
+
+		// Verify there are excess shares to strip
+		uint256 excessShares = pstAVAX.getExcessShares();
+		assertGt(excessShares, 0);
+
+		// Measure gas for stripYield call
+		uint256 gasBefore = gasleft();
+		uint256 sharesStripped = pstAVAX.stripYield();
+		uint256 gasUsed = gasBefore - gasleft();
+
+		// Log gas usage for visibility
+		// console2.log("Gas used for stripYield():", gasUsed);
+		// console2.log("Shares stripped:", sharesStripped);
+
+		// Verify the function worked
+		assertEq(sharesStripped, excessShares);
+		assertGt(sharesStripped, 0);
 	}
 
 	// Define events for testing (these match the contract events)
