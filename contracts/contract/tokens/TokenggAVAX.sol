@@ -214,7 +214,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	/// @notice Accepts AVAX deposit from a minipool. Expects the base amount and rewards earned from staking
 	/// @param baseAmt The amount of liquid staker AVAX used to create a minipool
 	/// @param rewardAmt The rewards amount (in AVAX) earned from staking
-	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt) public payable onlySpecificRegisteredContract("MinipoolManager", msg.sender) {
+	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt) external payable onlySpecificRegisteredContract("MinipoolManager", msg.sender) {
 		_depositFromStaking(baseAmt, rewardAmt, MINIPOOL_SOURCE);
 	}
 
@@ -222,13 +222,13 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	/// @param baseAmt The base amount being returned from staking/delegation
 	/// @param rewardAmt The reward amount from yield activities
 	/// @param source The source of the additional yield (i.e. MEV)
-	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt, bytes32 source) public payable onlyRole(STAKER_ROLE) {
+	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt, bytes32 source) external payable onlyRole(STAKER_ROLE) {
 		_depositFromStaking(baseAmt, rewardAmt, source);
 	}
 
 	/// @notice Allows anyone to deposit yield to the contract
 	/// @param source The source of the yield (i.e. MEV)
-	function depositYield(bytes32 source) public payable {
+	function depositYield(bytes32 source) external payable {
 		ProtocolDAO protocolDAO = ProtocolDAO(getContractAddress("ProtocolDAO"));
 		uint256 totalAmt = msg.value;
 		uint256 feeAmt = totalAmt.mulDivDown(protocolDAO.getFeeBips(), 10000);
@@ -275,8 +275,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 			revert WithdrawForStakingDisabled();
 		}
 
-		TokenggAVAX ggAVAX = TokenggAVAX(payable(getContractAddress("TokenggAVAX")));
-		if (assets > ggAVAX.amountAvailableForStaking()) {
+		if (assets > amountAvailableForStaking()) {
 			revert WithdrawAmountTooLarge();
 		}
 
@@ -360,7 +359,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	/// @notice Grant a role to an account - only admin can grant
 	/// @param role The role identifier
 	/// @param account The account to grant the role to
-	function grantRole(bytes32 role, address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
+	function grantRole(bytes32 role, address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
 		if (role == DEFAULT_ADMIN_ROLE) {
 			revert CannotGrantDefaultAdminRole();
 		}
@@ -370,7 +369,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	/// @notice Revoke a role from an account - only admin can revoke
 	/// @param role The role identifier
 	/// @param account The account to revoke the role from
-	function revokeRole(bytes32 role, address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
+	function revokeRole(bytes32 role, address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
 		// Prevent admin from revoking their own admin role without a pending admin
 		if (role == DEFAULT_ADMIN_ROLE && account == msg.sender && _pendingAdmin == address(0)) {
 			revert("Cannot revoke admin role without pending admin");
@@ -380,7 +379,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 
 	/// @notice Initiate admin transfer to a new address
 	/// @param newAdmin The address to transfer admin rights to
-	function transferAdmin(address newAdmin) public onlyRole(DEFAULT_ADMIN_ROLE) {
+	function transferAdmin(address newAdmin) external onlyRole(DEFAULT_ADMIN_ROLE) {
 		require(newAdmin != address(0), "New admin cannot be zero address");
 		require(newAdmin != msg.sender, "Cannot transfer to self");
 
@@ -389,7 +388,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	}
 
 	/// @notice Accept admin transfer - only pending admin can call
-	function acceptAdmin() public {
+	function acceptAdmin() external {
 		require(_pendingAdmin != address(0), "No pending admin transfer");
 		require(msg.sender == _pendingAdmin, "Only pending admin can accept");
 
@@ -404,7 +403,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	}
 
 	/// @notice Cancel pending admin transfer - only current admin can call
-	function cancelAdminTransfer() public onlyRole(DEFAULT_ADMIN_ROLE) {
+	function cancelAdminTransfer() external onlyRole(DEFAULT_ADMIN_ROLE) {
 		require(_pendingAdmin != address(0), "No pending admin transfer");
 
 		address canceledPendingAdmin = _pendingAdmin;
@@ -461,13 +460,13 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 
 	/// @notice Get the current admin address
 	/// @return address The current admin address
-	function admin() public view returns (address) {
+	function admin() external view returns (address) {
 		return _getAdmin();
 	}
 
 	/// @notice Get the pending admin address
 	/// @return address The pending admin address (zero if none)
-	function pendingAdmin() public view returns (address) {
+	function pendingAdmin() external view returns (address) {
 		return _pendingAdmin;
 	}
 

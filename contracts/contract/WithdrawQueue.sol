@@ -156,7 +156,6 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		uint256 amount = req.allocatedFunds;
 
 		// Clean up all request data
-		req.allocatedFunds = 0;
 		totalAllocatedFunds -= amount;
 		fulfilledRequests.remove(requestId);
 
@@ -225,14 +224,10 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			uint256 avaxAmount = req.allocatedFunds;
 
 			// Update accounting BEFORE external call (checks-effects-interactions)
-			req.allocatedFunds = 0;
 			totalAllocatedFunds -= avaxAmount;
 
 			// Remove from fulfilled queue BEFORE external call
 			fulfilledRequests.remove(requestId);
-
-			// Store necessary data before cleanup
-			address requester = req.requester;
 
 			// Clean up request data BEFORE external call
 			requestsByOwner[msg.sender].remove(requestId);
@@ -242,7 +237,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			sharesToReturn = tokenggAVAX.depositAVAX{value: avaxAmount}();
 
 			// Emit event after we know sharesToReturn
-			emit RequestCancelled(requestId, requester, sharesToReturn);
+			emit RequestCancelled(requestId, msg.sender, sharesToReturn);
 		} else {
 			revert RequestNotPending();
 		}
@@ -272,7 +267,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 	/// @notice Deposit AVAX to help fulfill pending unstake requests
 	/// @dev Uses the deposited AVAX to fulfill waiting requests, sends excess back to stAVAX
-	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt, bytes32 source) public payable onlyRole(DEPOSITOR_ROLE) {
+	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt, bytes32 source) external payable onlyRole(DEPOSITOR_ROLE) {
 		// Validate that the sum of baseAmt and rewardAmt equals msg.value
 		if (baseAmt + rewardAmt != msg.value) {
 			revert InvalidYieldAmounts();
@@ -430,7 +425,6 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			reclaimedAmount = req.allocatedFunds;
 
 			// Clean up all request data
-			req.allocatedFunds = 0;
 			totalAllocatedFunds -= reclaimedAmount;
 			fulfilledRequests.remove(requestId);
 			requestsByOwner[requester].remove(requestId);
