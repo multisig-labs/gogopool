@@ -40,8 +40,8 @@ contract WithdrawQueueGasTests is BaseTest {
 		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), backgroundJob);
 		withdrawQueue.grantRole(withdrawQueue.DEPOSITOR_ROLE(), backgroundJob);
 
-		// Set max pending requests limit to 25 for testing
-		withdrawQueue.setMaxPendingRequestsLimit(25);
+		// Set max requests per staking deposit to 25 for testing
+		withdrawQueue.setMaxRequestsPerStakingDeposit(25);
 
 		// Set reserve ratio to 0% for testing
 		store.setUint(keccak256("ProtocolDAO.TargetGGAVAXReserveRate"), 0);

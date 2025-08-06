@@ -46,8 +46,8 @@ contract WithdrawQueueTest is BaseTest {
 		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), charlie);
 		withdrawQueue.grantRole(withdrawQueue.DEPOSITOR_ROLE(), charlie);
 
-		// Set max pending requests limit for testing
-		withdrawQueue.setMaxPendingRequestsLimit(25);
+		// Set max requests per staking deposit for testing
+		withdrawQueue.setMaxRequestsPerStakingDeposit(25);
 
 		// Set reserve ratio to 0% so all funds can be withdrawn for staking
 		vm.startPrank(guardian);
@@ -61,22 +61,22 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(withdrawQueue.unstakeDelay(), UNSTAKE_DELAY);
 		assertEq(withdrawQueue.expirationDelay(), EXPIRATION_DELAY);
 		assertEq(withdrawQueue.nextRequestId(), 0);
-		assertEq(withdrawQueue.getMaxPendingRequestsLimit(), 25);
+		assertEq(withdrawQueue.getMaxRequestsPerStakingDeposit(), 25);
 	}
 
-	function testMaxPendingRequestsLimit() public {
+	function testMaxRequestsPerStakingDeposit() public {
 		// Test getter
-		assertEq(withdrawQueue.getMaxPendingRequestsLimit(), 25);
+		assertEq(withdrawQueue.getMaxRequestsPerStakingDeposit(), 25);
 
 		// Test setter (only admin can set)
 		vm.prank(guardian);
-		withdrawQueue.setMaxPendingRequestsLimit(100);
-		assertEq(withdrawQueue.getMaxPendingRequestsLimit(), 100);
+		withdrawQueue.setMaxRequestsPerStakingDeposit(100);
+		assertEq(withdrawQueue.getMaxRequestsPerStakingDeposit(), 100);
 
 		// Test that non-admin cannot set
 		vm.prank(alice);
 		vm.expectRevert();
-		withdrawQueue.setMaxPendingRequestsLimit(200);
+		withdrawQueue.setMaxRequestsPerStakingDeposit(200);
 	}
 
 	function testSetUnstakeDelay() public {
@@ -1882,7 +1882,7 @@ contract WithdrawQueueTest is BaseTest {
 	function testConfigurableRequestsLimit() public {
 		// Test that changing the limit affects batching behavior
 		vm.prank(guardian);
-		withdrawQueue.setMaxPendingRequestsLimit(10); // Set lower limit
+		withdrawQueue.setMaxRequestsPerStakingDeposit(10); // Set lower limit
 
 		// Create 15 unstake requests (more than the 10 limit)
 		vm.startPrank(alice);

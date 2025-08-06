@@ -41,8 +41,8 @@ contract WithdrawQueueInvariants is BaseTest {
 		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), charlie);
 		withdrawQueue.grantRole(withdrawQueue.DEPOSITOR_ROLE(), charlie);
 
-		// Set max pending requests limit for testing
-		withdrawQueue.setMaxPendingRequestsLimit(25);
+		// Set max requests per staking deposit for testing
+		withdrawQueue.setMaxRequestsPerStakingDeposit(25);
 
 		// Set reserve ratio to 0% so all funds can be withdrawn for staking
 		store.setUint(keccak256("ProtocolDAO.TargetGGAVAXReserveRate"), 0);

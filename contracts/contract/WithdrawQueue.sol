@@ -51,7 +51,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	TokenggAVAX public tokenggAVAX;
 	Storage public store;
 
-	uint256 private maxPendingRequestsLimit;
+	uint256 private maxRequestsPerStakingDeposit;
 
 	event UnstakeRequested(uint256 indexed requestId, address indexed requester, uint256 shares, uint256 expectedAssets, uint48 claimableTime);
 	event RequestFulfilled(bytes32 indexed source, uint256 indexed requestId, uint256 assets);
@@ -353,7 +353,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 		// Process pending requests from front of queue, removing fulfilled requests and then leave the money in the contract if still more to process
 		uint256 requestsProcessed = 0;
-		while (pendingRequests.length() > 0 && requestsProcessed < maxPendingRequestsLimit) {
+		while (pendingRequests.length() > 0 && requestsProcessed < maxRequestsPerStakingDeposit) {
 			uint256 requestId = uint256(pendingRequestsQueue.front());
 			if (!pendingRequests.contains(requestId)) {
 				pendingRequestsQueue.popFront();
@@ -616,14 +616,14 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 	/// @notice Get the current max pending requests limit
 	/// @return The current max pending requests limit
-	function getMaxPendingRequestsLimit() external view returns (uint256) {
-		return maxPendingRequestsLimit;
+	function getMaxRequestsPerStakingDeposit() external view returns (uint256) {
+		return maxRequestsPerStakingDeposit;
 	}
 
 	/// @notice Set the max pending requests limit (admin only)
 	/// @param newLimit The new max pending requests limit
-	function setMaxPendingRequestsLimit(uint256 newLimit) external onlyRole(DEFAULT_ADMIN_ROLE) {
-		maxPendingRequestsLimit = newLimit;
+	function setMaxRequestsPerStakingDeposit(uint256 newLimit) external onlyRole(DEFAULT_ADMIN_ROLE) {
+		maxRequestsPerStakingDeposit = newLimit;
 	}
 
 	/// @notice Set the unstake delay (admin only)
