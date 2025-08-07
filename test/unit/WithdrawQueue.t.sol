@@ -34,7 +34,13 @@ contract WithdrawQueueTest is BaseTest {
 		// Deploy WithdrawQueue
 		vm.startPrank(guardian);
 		WithdrawQueue withdrawQueueImpl = new WithdrawQueue();
-		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), address(store), UNSTAKE_DELAY, EXPIRATION_DELAY);
+		bytes memory initData = abi.encodeWithSelector(
+			WithdrawQueue.initialize.selector,
+			address(ggAVAX),
+			address(store),
+			UNSTAKE_DELAY,
+			EXPIRATION_DELAY
+		);
 
 		TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(withdrawQueueImpl), address(proxyAdmin), initData);
 
@@ -114,7 +120,13 @@ contract WithdrawQueueTest is BaseTest {
 	function testInitializationEvent() public {
 		// Deploy a new WithdrawQueue to test the initialization event
 		WithdrawQueue newWithdrawQueueImpl = new WithdrawQueue();
-		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), address(store), UNSTAKE_DELAY, EXPIRATION_DELAY);
+		bytes memory initData = abi.encodeWithSelector(
+			WithdrawQueue.initialize.selector,
+			address(ggAVAX),
+			address(store),
+			UNSTAKE_DELAY,
+			EXPIRATION_DELAY
+		);
 
 		// Expect the ContractInitialized event
 		vm.expectEmit(true, false, false, true);
@@ -168,7 +180,7 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(withdrawQueue.isRequestPending(requestId), true);
 
 		// Check user requests mapping
-		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice);
+		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice, 0, 0);
 		assertEq(userRequests.length, 1);
 		assertEq(userRequests[0], requestId);
 	}
@@ -212,7 +224,7 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(requestId1, 0);
 		assertEq(requestId2, 1);
 
-		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice);
+		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice, 0, 0);
 		assertEq(userRequests.length, 2);
 		assertEq(userRequests[0], requestId1);
 		assertEq(userRequests[1], requestId2);
@@ -1155,7 +1167,7 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(withdrawQueue.getRequestInfo(requestId).requester, address(0));
 
 		// Verify user's request history was cleaned up
-		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice);
+		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice, 0, 0);
 		assertEq(userRequests.length, 0);
 	}
 
@@ -1195,7 +1207,7 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(withdrawQueue.getRequestInfo(requestId).requester, address(0));
 
 		// Verify user's request history was cleaned up
-		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice);
+		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice, 0, 0);
 		assertEq(userRequests.length, 0);
 	}
 
@@ -1625,7 +1637,7 @@ contract WithdrawQueueTest is BaseTest {
 		}
 
 		// Verify user has no more requests
-		assertEq(withdrawQueue.getRequestsByOwner(alice).length, 0);
+		assertEq(withdrawQueue.getRequestsByOwner(alice, 0, 0).length, 0);
 
 		// Verify pending and fulfilled queues are empty
 		assertEq(withdrawQueue.getPendingRequestsCount(), 0);
@@ -1655,7 +1667,7 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(cancelledCount, 3);
 
 		// User should still have 2 requests
-		assertEq(withdrawQueue.getRequestsByOwner(alice).length, 2);
+		assertEq(withdrawQueue.getRequestsByOwner(alice, 0, 0).length, 2);
 	}
 
 	function testCancelNonExistentRequest() public {
@@ -1843,7 +1855,13 @@ contract WithdrawQueueTest is BaseTest {
 		// Deploy a new WithdrawQueue with the malicious ggAVAX
 		WithdrawQueue maliciousQueue;
 		WithdrawQueue withdrawQueueImpl = new WithdrawQueue();
-		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(maliciousGGAVAX), address(store), UNSTAKE_DELAY, EXPIRATION_DELAY);
+		bytes memory initData = abi.encodeWithSelector(
+			WithdrawQueue.initialize.selector,
+			address(maliciousGGAVAX),
+			address(store),
+			UNSTAKE_DELAY,
+			EXPIRATION_DELAY
+		);
 
 		TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(withdrawQueueImpl), address(proxyAdmin), initData);
 
@@ -2011,7 +2029,7 @@ contract WithdrawQueueTest is BaseTest {
 		withdrawQueue.depositFromStaking{value: 3 ether}(baseAmt, rewardAmt, bytes32("HYP3_FIX_TEST"));
 	}
 
-		function testDepositFromStakingWithFeeCalculation() public {
+	function testDepositFromStakingWithFeeCalculation() public {
 		// Test that the fee calculation correctly ensures sufficient funds are deposited to TokenggAVAX
 
 		// Set a protocol fee for rewards (5% = 500 basis points)
@@ -2067,6 +2085,245 @@ contract WithdrawQueueTest is BaseTest {
 		assertTrue(ggAVAXAvailableAfter >= 0, "ggAVAX should maintain liquidity after fee-adjusted deposit");
 	}
 
+	function testGetRequestsByOwnerPagination() public {
+		// Setup: Alice deposits enough ggAVAX to create multiple requests
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 2000 ether}();
+
+		// Create 10 requests for Alice with different amounts
+		uint256[] memory expectedRequestIds = new uint256[](10);
+
+		vm.startPrank(alice);
+		for (uint256 i = 0; i < 10; i++) {
+			uint256 shares = (i + 1) * 10 ether; // 10, 20, 30, ..., 100 ether
+			ggAVAX.approve(address(withdrawQueue), shares);
+			expectedRequestIds[i] = withdrawQueue.requestUnstake(shares);
+		}
+		vm.stopPrank();
+
+		// Verify all requests were created correctly
+		assertEq(withdrawQueue.nextRequestId(), 10, "Should have created 10 requests");
+
+		_testBasicPagination(expectedRequestIds);
+		_testEdgeCases(expectedRequestIds);
+		_testConsistencyAndOverlaps(expectedRequestIds);
+		_testExpandedRequests(expectedRequestIds);
+	}
+
+	function _testBasicPagination(uint256[] memory expectedRequestIds) internal {
+		// Test 1: Get all requests with limit = 0 (should return all)
+		uint256[] memory allRequests = withdrawQueue.getRequestsByOwner(alice, 0, 0);
+		assertEq(allRequests.length, 10, "Should return all 10 requests when limit = 0");
+		for (uint256 i = 0; i < 10; i++) {
+			assertEq(allRequests[i], expectedRequestIds[i], "Request IDs should match expected order");
+		}
+
+		// Test 2: Test pagination with page size of 3
+		uint256[] memory page1 = withdrawQueue.getRequestsByOwner(alice, 0, 3);
+		uint256[] memory page2 = withdrawQueue.getRequestsByOwner(alice, 3, 3);
+		uint256[] memory page3 = withdrawQueue.getRequestsByOwner(alice, 6, 3);
+		uint256[] memory page4 = withdrawQueue.getRequestsByOwner(alice, 9, 3);
+
+		// Verify page sizes
+		assertEq(page1.length, 3, "Page 1 should have 3 items");
+		assertEq(page2.length, 3, "Page 2 should have 3 items");
+		assertEq(page3.length, 3, "Page 3 should have 3 items");
+		assertEq(page4.length, 1, "Page 4 should have 1 item (last page)");
+
+		// Verify page contents
+		for (uint256 i = 0; i < 3; i++) {
+			assertEq(page1[i], expectedRequestIds[i], "Page 1 content should match");
+			assertEq(page2[i], expectedRequestIds[i + 3], "Page 2 content should match");
+			assertEq(page3[i], expectedRequestIds[i + 6], "Page 3 content should match");
+		}
+		assertEq(page4[0], expectedRequestIds[9], "Page 4 content should match");
+
+		// Test 3: Test single item pagination
+		for (uint256 i = 0; i < 10; i++) {
+			uint256[] memory singleItem = withdrawQueue.getRequestsByOwner(alice, i, 1);
+			assertEq(singleItem.length, 1, "Should return exactly 1 item");
+			assertEq(singleItem[0], expectedRequestIds[i], "Single item should match expected");
+		}
+	}
+
+	function _testEdgeCases(uint256[] memory expectedRequestIds) internal {
+		// Test 4: Test large page size (larger than total)
+		uint256[] memory largePage = withdrawQueue.getRequestsByOwner(alice, 0, 20);
+		assertEq(largePage.length, 10, "Large page should be capped at total items");
+		for (uint256 i = 0; i < 10; i++) {
+			assertEq(largePage[i], expectedRequestIds[i], "Large page content should match");
+		}
+
+		// Test 5: Test offset at boundary
+		uint256[] memory boundaryPage = withdrawQueue.getRequestsByOwner(alice, 5, 10);
+		assertEq(boundaryPage.length, 5, "Boundary page should return remaining items");
+		for (uint256 i = 0; i < 5; i++) {
+			assertEq(boundaryPage[i], expectedRequestIds[i + 5], "Boundary page content should match");
+		}
+
+		// Test 6: Test offset beyond total (should return empty)
+		uint256[] memory emptyPage1 = withdrawQueue.getRequestsByOwner(alice, 10, 5);
+		uint256[] memory emptyPage2 = withdrawQueue.getRequestsByOwner(alice, 15, 1);
+		assertEq(emptyPage1.length, 0, "Should return empty array when offset >= total");
+		assertEq(emptyPage2.length, 0, "Should return empty array when offset > total");
+
+		// Test 7: Test with offset = total - 1 (last item)
+		uint256[] memory lastItem = withdrawQueue.getRequestsByOwner(alice, 9, 5);
+		assertEq(lastItem.length, 1, "Should return last item");
+		assertEq(lastItem[0], expectedRequestIds[9], "Last item should match");
+
+		// Test 8: Test empty results for different user
+		uint256[] memory bobRequests = withdrawQueue.getRequestsByOwner(bob, 0, 0);
+		assertEq(bobRequests.length, 0, "Bob should have no requests");
+	}
+
+	function _testConsistencyAndOverlaps(uint256[] memory expectedRequestIds) internal {
+		// Test 9: Test consistency across multiple calls
+		uint256[] memory consistency1 = withdrawQueue.getRequestsByOwner(alice, 2, 4);
+		uint256[] memory consistency2 = withdrawQueue.getRequestsByOwner(alice, 2, 4);
+		assertEq(consistency1.length, consistency2.length, "Consistent calls should return same length");
+		for (uint256 i = 0; i < consistency1.length; i++) {
+			assertEq(consistency1[i], consistency2[i], "Consistent calls should return same content");
+		}
+
+		// Test 10: Test partial page at the end
+		uint256[] memory partialEnd = withdrawQueue.getRequestsByOwner(alice, 8, 5);
+		assertEq(partialEnd.length, 2, "Should return remaining 2 items");
+		assertEq(partialEnd[0], expectedRequestIds[8], "First item should match");
+		assertEq(partialEnd[1], expectedRequestIds[9], "Second item should match");
+
+		// Test 11: Verify no overlap between adjacent pages
+		uint256[] memory adjacentPage1 = withdrawQueue.getRequestsByOwner(alice, 0, 4);
+		uint256[] memory adjacentPage2 = withdrawQueue.getRequestsByOwner(alice, 4, 4);
+
+		// Check no duplicates between pages
+		for (uint256 i = 0; i < adjacentPage1.length; i++) {
+			for (uint256 j = 0; j < adjacentPage2.length; j++) {
+				assertTrue(adjacentPage1[i] != adjacentPage2[j], "Adjacent pages should not overlap");
+			}
+		}
+	}
+
+	function _testExpandedRequests(uint256[] memory expectedRequestIds) internal {
+		// Test 12: Create additional requests and verify pagination still works
+		vm.startPrank(alice);
+		for (uint256 i = 0; i < 3; i++) {
+			uint256 shares = 5 ether;
+			ggAVAX.approve(address(withdrawQueue), shares);
+			withdrawQueue.requestUnstake(shares);
+		}
+		vm.stopPrank();
+
+		uint256[] memory expandedRequests = withdrawQueue.getRequestsByOwner(alice, 0, 0);
+		assertEq(expandedRequests.length, 13, "Should now have 13 total requests");
+
+		// Verify old requests are still in the same positions
+		for (uint256 i = 0; i < 10; i++) {
+			assertEq(expandedRequests[i], expectedRequestIds[i], "Original requests should maintain position");
+		}
+
+		// Test pagination on expanded set
+		uint256[] memory expandedPage1 = withdrawQueue.getRequestsByOwner(alice, 0, 5);
+		uint256[] memory expandedPage2 = withdrawQueue.getRequestsByOwner(alice, 5, 5);
+		uint256[] memory expandedPage3 = withdrawQueue.getRequestsByOwner(alice, 10, 5);
+
+		assertEq(expandedPage1.length, 5, "Expanded page 1 should have 5 items");
+		assertEq(expandedPage2.length, 5, "Expanded page 2 should have 5 items");
+		assertEq(expandedPage3.length, 3, "Expanded page 3 should have 3 items");
+	}
+
+	function testMinUnstakeOnBehalfOfAmt() public {
+		// Test initial value (should be 0.01 ether from initialization)
+		assertEq(withdrawQueue.getMinUnstakeOnBehalfOfAmt(), 0.01 ether);
+
+		// Test setter (only admin can set)
+		uint256 newMinAmt = 0.05 ether;
+		vm.prank(guardian);
+		withdrawQueue.setMinUnstakeOnBehalfOfAmt(newMinAmt);
+		assertEq(withdrawQueue.getMinUnstakeOnBehalfOfAmt(), newMinAmt);
+
+		// Test that non-admin cannot set
+		vm.prank(alice);
+		vm.expectRevert();
+		withdrawQueue.setMinUnstakeOnBehalfOfAmt(0.1 ether);
+	}
+
+	function testRequestUnstakeOnBehalfOfMinimumNotMet() public {
+		// Setup: alice deposits ggAVAX, bob will try to unstake on behalf of alice
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 1000 ether}();
+
+		uint256 tooSmallAmount = 0.005 ether; // Less than 0.01 ether minimum
+		vm.startPrank(bob);
+
+		// Bob should revert when trying to unstake less than minimum
+		vm.expectRevert(WithdrawQueue.MinimumSharesNotMet.selector);
+		withdrawQueue.requestUnstakeOnBehalfOf(tooSmallAmount, alice);
+
+		vm.stopPrank();
+	}
+
+	function testRequestUnstakeOnBehalfOfMinimumMet() public {
+		// Setup: alice deposits ggAVAX, then transfers some to bob so bob can unstake on behalf of alice
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 1000 ether}();
+
+		uint256 validAmount = 0.05 ether; // More than 0.01 ether minimum
+
+		// Alice transfers some ggAVAX to bob
+		vm.prank(alice);
+		ggAVAX.transfer(bob, validAmount);
+
+		uint256 bobSharesBefore = ggAVAX.balanceOf(bob);
+
+		// Bob approves withdraw queue to spend his ggAVAX
+		vm.prank(bob);
+		ggAVAX.approve(address(withdrawQueue), validAmount);
+
+		vm.startPrank(bob);
+		uint256 requestId = withdrawQueue.requestUnstakeOnBehalfOf(validAmount, alice);
+		vm.stopPrank();
+
+		// Verify the request was created successfully
+		WithdrawQueue.UnstakeRequest memory request = withdrawQueue.getRequestInfo(requestId);
+		assertEq(request.requester, alice); // alice should be the requester (beneficiary)
+		assertEq(request.shares, validAmount);
+		assertEq(request.requestTime, block.timestamp);
+		assertEq(request.claimableTime, block.timestamp + UNSTAKE_DELAY);
+		assertEq(request.expirationTime, block.timestamp + UNSTAKE_DELAY + EXPIRATION_DELAY);
+
+		// Verify shares were transferred from bob to withdraw queue
+		assertEq(ggAVAX.balanceOf(bob), bobSharesBefore - validAmount);
+		assertEq(ggAVAX.balanceOf(address(withdrawQueue)), validAmount);
+
+		// Verify request is pending
+		assertTrue(withdrawQueue.isRequestPending(requestId));
+	}
+
+	function testRequestUnstakeOnBehalfOfExactMinimum() public {
+		// Setup: alice deposits ggAVAX, then transfers to bob
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 1000 ether}();
+
+		uint256 exactMinAmount = 0.01 ether; // Exactly the minimum
+
+		// Alice transfers ggAVAX to bob
+		vm.prank(alice);
+		ggAVAX.transfer(bob, exactMinAmount);
+
+		// Bob approves withdraw queue to spend his ggAVAX
+		vm.prank(bob);
+		ggAVAX.approve(address(withdrawQueue), exactMinAmount);
+
+		vm.startPrank(bob);
+		uint256 requestId = withdrawQueue.requestUnstakeOnBehalfOf(exactMinAmount, alice);
+		vm.stopPrank();
+
+		// Should succeed with exact minimum amount
+		WithdrawQueue.UnstakeRequest memory request = withdrawQueue.getRequestInfo(requestId);
+		assertEq(request.requester, alice);
+		assertEq(request.shares, exactMinAmount);
+	}
 }
 
 // Malicious contract that attempts reentrancy

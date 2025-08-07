@@ -52,6 +52,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	Storage public store;
 
 	uint256 private maxRequestsPerStakingDeposit;
+	uint256 private minUnstakeOnBehalfOfAmt;
 
 	event UnstakeRequested(uint256 indexed requestId, address indexed requester, uint256 shares, uint256 expectedAssets, uint48 claimableTime);
 	event RequestFulfilled(bytes32 indexed source, uint256 indexed requestId, uint256 assets);
@@ -83,6 +84,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	error ZeroShares();
 	error InvalidRedemptionAmount();
 	error InvalidYieldAmounts();
+	error MinimumSharesNotMet();
 
 	/// @custom:oz-upgrades-unsafe-allow constructor
 	constructor() {
@@ -103,6 +105,9 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		expirationDelay = _expirationDelay;
 		store = Storage(storageAddress);
 
+		maxRequestsPerStakingDeposit = 50;
+		minUnstakeOnBehalfOfAmt = 0.01 ether;
+
 		emit ContractInitialized(tokenggAVAXAddress, _unstakeDelay, _expirationDelay);
 	}
 
@@ -122,6 +127,9 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	}
 
 	function requestUnstakeOnBehalfOf(uint256 shares, address requester) external returns (uint256 requestId) {
+		if (shares < minUnstakeOnBehalfOfAmt) {
+			revert MinimumSharesNotMet();
+		}
 		return _requestUnstake(shares, msg.sender, requester);
 	}
 
@@ -560,6 +568,18 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		maxRequestsPerStakingDeposit = newLimit;
 	}
 
+	/// @notice Set the minimum unstake amount on behalf of (admin only)
+	/// @param newMinUnstakeOnBehalfOfAmt The new minimum unstake amount on behalf of
+	function setMinUnstakeOnBehalfOfAmt(uint256 newMinUnstakeOnBehalfOfAmt) external onlyRole(DEFAULT_ADMIN_ROLE) {
+		minUnstakeOnBehalfOfAmt = newMinUnstakeOnBehalfOfAmt;
+	}
+
+	/// @notice Get the minimum unstake amount on behalf of
+	/// @return The minimum unstake amount on behalf of
+	function getMinUnstakeOnBehalfOfAmt() external view returns (uint256) {
+		return minUnstakeOnBehalfOfAmt;
+	}
+
 	/// @notice Set the unstake delay (admin only)
 	/// @param newUnstakeDelay The new unstake delay in seconds
 	function setUnstakeDelay(uint48 newUnstakeDelay) external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -590,11 +610,29 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		return block.timestamp >= req.claimableTime && block.timestamp < req.expirationTime;
 	}
 
-	/// @notice Get all unstake request IDs for a specific user
-	/// @param user The address of the user
-	/// @return Array of all request IDs belonging to that user
-	function getRequestsByOwner(address user) external view returns (uint256[] memory) {
-		return requestsByOwner[user].values();
+	/// @notice Get unstake request IDs for a user, paginated
+	/// @param user   The address of the user
+	/// @param offset How many entries to skip (0-based)
+	/// @param limit  Max number of entries to return; if 0, returns all after offset
+	/// @return ids   Array of request IDs in the requested slice
+	function getRequestsByOwner(address user, uint256 offset, uint256 limit) external view returns (uint256[] memory ids) {
+		uint256 total = requestsByOwner[user].length();
+
+		if (offset >= total) {
+			return new uint256[](0);
+		}
+
+		// if limit==0, return everything from offset; otherwise cap at total
+		uint256 end = limit == 0 ? total : offset + limit;
+		if (end > total) {
+			end = total;
+		}
+
+		uint256 count = end - offset;
+		ids = new uint256[](count);
+		for (uint256 i = 0; i < count; i++) {
+			ids[i] = requestsByOwner[user].at(offset + i);
+		}
 	}
 
 	/// @notice Get how many unstake requests are still waiting to be fulfilled

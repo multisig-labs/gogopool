@@ -142,7 +142,7 @@ contract WithdrawQueueInvariants is BaseTest {
 		address[] memory users = handler.getUsers();
 		for (uint256 j = 0; j < users.length; j++) {
 			address user = users[j];
-			uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(user);
+			uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(user, 0, 0);
 			for (uint256 k = 0; k < userRequests.length; k++) {
 				WithdrawQueue.UnstakeRequest memory req = withdrawQueue.getRequestInfo(userRequests[k]);
 
