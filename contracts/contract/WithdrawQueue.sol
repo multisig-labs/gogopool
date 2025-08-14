@@ -311,6 +311,9 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			uint256 withdrawQueueAvailableAssets = address(this).balance > totalAllocatedFunds ? address(this).balance - totalAllocatedFunds : 0;
 			if (withdrawQueueAvailableAssets + ggAVAXAvailableAssets < req.expectedAssets) {
 				emit InsufficientLiquidity(withdrawQueueAvailableAssets + ggAVAXAvailableAssets, req.expectedAssets);
+				if (excessAVAX > 0) {
+					_depositYield(excessAVAX);
+				}
 				return;
 			}
 
@@ -327,6 +330,9 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 				if (depositAmountIncludingFees > withdrawQueueAvailableAssets) {
 					emit InsufficientLiquidity(withdrawQueueAvailableAssets, depositAmountIncludingFees);
+					if (excessAVAX > 0) {
+						_depositYield(excessAVAX);
+					}
 					return;
 				}
 
@@ -386,7 +392,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		}
 
 		if (excessAVAX > 0) {
-			tokenggAVAX.depositYield{value: excessAVAX}(bytes32("WITHDRAW_QUEUE"));
+			_depositYield(excessAVAX);
 		}
 
 		if (pendingRequests.length() != 0) {
@@ -723,6 +729,12 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	/// @param value The amount of AVAX to deposit
 	function _depositToGGAVAX(uint256 baseAmt, uint256 rewardAmt, bytes32 source, uint256 value) internal {
 		tokenggAVAX.depositFromStaking{value: value}(baseAmt, rewardAmt, source);
+	}
+
+	/// @notice Deposit AVAX to ggAVAX via yield method
+	/// @param value The amount of AVAX to deposit
+	function _depositYield(uint256 value) internal {
+		tokenggAVAX.depositYield{value: value}(bytes32("WITHDRAW_QUEUE"));
 	}
 
 	/// @notice Get the amount of AVAX available in ggAVAX for redemption

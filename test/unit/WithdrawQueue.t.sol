@@ -2324,6 +2324,76 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(request.requester, alice);
 		assertEq(request.shares, exactMinAmount);
 	}
+
+	function testDepositFromStakingEarlyReturnDonatesExcessFunds() public {
+		// Test that excess AVAX is properly donated back even when depositFromStaking hits early returns
+		// This verifies the fix for the bug where accumulated excessAVAX was lost on early returns
+
+		// Setup: Create initial liquidity and improve exchange rate
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 2000 ether}();
+
+		// Create first request that will be fulfilled with excess due to improved exchange rate
+		vm.prank(alice);
+		ggAVAX.approve(address(withdrawQueue), 100 ether);
+		vm.prank(alice);
+		uint256 requestId1 = withdrawQueue.requestUnstake(100 ether);
+
+		// Improve exchange rate by adding rewards
+		vm.prank(address(minipoolMgr));
+		ggAVAX.withdrawForStaking(500 ether);
+
+		vm.deal(address(minipoolMgr), 600 ether);
+
+		vm.prank(address(minipoolMgr));
+		ggAVAX.depositFromStaking{value: 600 ether}(500 ether, 100 ether);
+
+		// Advance time and sync rewards to improve exchange rate
+		vm.warp(block.timestamp + 15 days);
+		ggAVAX.syncRewards();
+		vm.warp(block.timestamp + 15 days);
+
+		// Create second large request that will trigger insufficient liquidity
+		vm.prank(alice);
+		ggAVAX.approve(address(withdrawQueue), 1500 ether);
+		vm.prank(alice);
+		uint256 requestId2 = withdrawQueue.requestUnstake(1500 ether);
+
+		// Reduce ggAVAX liquidity to force early return on second request
+		vm.startPrank(address(minipoolMgr));
+		uint256 currentLiquidity = ggAVAX.amountAvailableForStaking();
+		uint256 liquidityToWithdraw = currentLiquidity - 120 ether; // Leave enough for first request only
+		if (liquidityToWithdraw > 0) {
+			ggAVAX.withdrawForStaking(liquidityToWithdraw);
+		}
+		vm.stopPrank();
+
+		// Verify test setup
+		assertEq(withdrawQueue.getRequestInfo(requestId1).expectedAssets, 100 ether, "First request should expect 100 ether");
+		assertEq(withdrawQueue.getRequestInfo(requestId2).expectedAssets, 1575 ether, "Second request should expect 1575 ether");
+		assertEq(ggAVAX.amountAvailableForStaking(), 120 ether, "Should have 120 ether liquidity remaining");
+
+		// Execute depositFromStaking - should fulfill first request and hit early return on second
+		uint256 depositAmount = 200 ether;
+		vm.deal(charlie, depositAmount);
+		vm.prank(charlie);
+		withdrawQueue.depositFromStaking{value: depositAmount}(0, depositAmount, bytes32("TEST_YIELD"));
+
+		// Verify the scenario worked as expected
+		assertTrue(withdrawQueue.isFulfilledRequest(requestId1), "First request should be fulfilled");
+		assertTrue(withdrawQueue.isRequestPending(requestId2), "Second request should still be pending");
+
+		// Verify excess AVAX was properly donated back
+		// From the trace we can see:
+		// 1. redeemAVAX returned 105 ether (as shown in the Withdraw event)
+		// 2. Only 100 ether was allocated to the request (expectedAssets)
+		// 3. depositYield was called with 5 ether excess before the early return
+		// 4. The first request was allocated exactly 100 ether
+
+		assertGt(ggAVAX.asset().balanceOf(address(ggAVAX)), ggAVAX.amountAvailableForStaking());
+		// Key verification: The first request should be allocated exactly 100 ether despite 105 ether being redeemed
+		assertEq(withdrawQueue.getRequestInfo(requestId1).allocatedFunds, 100 ether, "First request should have exactly 100 ether allocated");
+	}
 }
 
 // Malicious contract that attempts reentrancy
