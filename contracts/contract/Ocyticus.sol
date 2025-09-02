@@ -11,6 +11,7 @@ contract Ocyticus is Base {
 	error NotAllowed();
 
 	mapping(address => bool) public defenders;
+	address[] public defendersList;
 
 	modifier onlyDefender() {
 		if (!defenders[msg.sender]) {
@@ -19,20 +20,40 @@ contract Ocyticus is Base {
 		_;
 	}
 
-	constructor(Storage storageAddress) Base(storageAddress) {
-		defenders[msg.sender] = true;
-	}
+	constructor(Storage storageAddress) Base(storageAddress) {}
 
 	/// @notice Add an address to the defender list
 	/// @param defender Address to add
 	function addDefender(address defender) external onlyGuardian {
 		defenders[defender] = true;
+		defendersList.push(defender);
 	}
 
 	/// @notice Remove an address from the defender list
 	/// @param defender address to remove
 	function removeDefender(address defender) external onlyGuardian {
-		delete defenders[defender];
+		for (uint256 i = 0; i < defendersList.length; i++) {
+			if (defendersList[i] == defender) {
+				defendersList[i] = defendersList[defendersList.length - 1];
+				defendersList.pop();
+				delete defenders[defender];
+				break;
+			}
+		}
+	}
+
+	/// @notice Pause a contract
+	/// @param contractName The contract whose actions should be paused
+	function pauseContract(string memory contractName) external onlyDefender {
+		ProtocolDAO dao = ProtocolDAO(getContractAddress("ProtocolDAO"));
+		dao.pauseContract(contractName);
+	}
+
+	/// @notice Resume a contract
+	/// @param contractName The contract whose actions should be resumed
+	function resumeContract(string memory contractName) external onlyDefender {
+		ProtocolDAO dao = ProtocolDAO(getContractAddress("ProtocolDAO"));
+		dao.resumeContract(contractName);
 	}
 
 	/// @notice Restrict actions in important contracts
