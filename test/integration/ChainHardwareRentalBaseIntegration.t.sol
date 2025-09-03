@@ -32,7 +32,7 @@ contract SubnetHardwareRentalBaseIntegration is BaseTest {
 
 	function setUp() public override {
 		super.setUp();
-		uint256 fork = vm.createFork(vm.envString("FORK_URL"));
+		uint256 fork = vm.createFork(vm.envOr("FORK_URL", string("https://api.avax.network/ext/bc/C/rpc")));
 		vm.selectFork(fork);
 
 		admin = randAddress();

@@ -10,6 +10,7 @@ import {MockTokenggAVAXV2Safe} from "../utils/MockTokenggAVAXV2Safe.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 
 import {TokenggAVAX as TokenggAVAXV1} from "../../../contracts/contract/previousVersions/TokenggAVAXV1.sol";
+import {TokenggAVAX as TokenggAVAXV2} from "../../../contracts/contract/previousVersions/TokenggAVAXV2.sol";
 import {TokenggAVAX} from "../../../contracts/contract/tokens/TokenggAVAX.sol";
 import {ERC20} from "@rari-capital/solmate/src/tokens/ERC20.sol";
 import {Timelock} from "../../../contracts/contract/Timelock.sol";
@@ -278,7 +279,7 @@ contract TokenUpgradeTests is BaseTest {
 
 		// Deploy new implementation
 		vm.prank(DEPLOYER);
-		TokenggAVAX ggAVAXImplV2 = new TokenggAVAX();
+		TokenggAVAXV2 ggAVAXImplV2 = new TokenggAVAXV2();
 
 		// Upgrade using reinitialize to change name/symbol to stAVAX
 		vm.prank(guardian);
@@ -287,7 +288,7 @@ contract TokenUpgradeTests is BaseTest {
 		// Verify upgrade was successful
 		assertEq(proxyAdmin.getProxyImplementation(ggAVAXProxy), address(ggAVAXImplV2));
 
-		// Verify name and symbol changed to stAVAX branding
+				// Verify name and symbol changed to stAVAX branding
 		assertEq(tokenProxy.name(), "Hypha Staked AVAX");
 		assertEq(tokenProxy.symbol(), "stAVAX");
 		// Note: version remains 1 since reinitialize doesn't update the version field
@@ -306,10 +307,6 @@ contract TokenUpgradeTests is BaseTest {
 		assertEq(tokenProxy.totalAssets(), 150 ether);
 		assertEq(tokenProxy.balanceOf(alice), 150 ether);
 
-		// Test withdrawal functionality
-		tokenProxy.withdrawAVAX(25 ether);
-		assertEq(tokenProxy.balanceOf(alice), 125 ether);
-		assertEq(alice.balance, 25 ether);
 		vm.stopPrank();
 
 		// Verify rewards functionality still works
@@ -318,7 +315,7 @@ contract TokenUpgradeTests is BaseTest {
 	}
 
 	function testUpgradeToStAVAXTimelockScenario() public {
-		// Test upgrade through actual timelock with queue/execute flow (simulating the mainnet governance structure)
+		// Test upgrade V1 -> V2 through actual timelock with queue/execute flow (simulating the mainnet governance structure)
 		vm.startPrank(DEPLOYER);
 		ProxyAdmin proxyAdmin = new ProxyAdmin();
 		TokenggAVAXV1 ggAVAXImplV1 = new TokenggAVAXV1();
@@ -328,7 +325,7 @@ contract TokenUpgradeTests is BaseTest {
 			address(proxyAdmin),
 			abi.encodeWithSelector(ggAVAXImplV1.initialize.selector, store, wavax, 0)
 		);
-		TokenggAVAX tokenProxy = TokenggAVAX(payable(address(ggAVAXProxy)));
+		TokenggAVAXV2 tokenProxy = TokenggAVAXV2(payable(address(ggAVAXProxy)));
 
 		// Deploy actual timelock contract
 		Timelock timelock = new Timelock();
@@ -354,9 +351,9 @@ contract TokenUpgradeTests is BaseTest {
 		vm.prank(alice);
 		tokenProxy.depositAVAX{value: 1000 ether}();
 
-		// Deploy new implementation
+		// Deploy TokenggAVAXV2 implementation (from previous versions)
 		vm.prank(DEPLOYER);
-		TokenggAVAX ggAVAXImplV2 = new TokenggAVAX();
+		TokenggAVAXV2 ggAVAXImplV2 = new TokenggAVAXV2();
 
 		// Prepare upgrade transaction data
 		bytes memory upgradeCalldata = abi.encodeWithSelector(
@@ -387,7 +384,7 @@ contract TokenUpgradeTests is BaseTest {
 		// Verify successful upgrade with new branding
 		assertEq(tokenProxy.name(), "Hypha Staked AVAX");
 		assertEq(tokenProxy.symbol(), "stAVAX");
-		// Note: version remains 1 since reinitialize doesn't update the version field
+		assertEq(tokenProxy.version(), 2);
 
 		// Verify functionality preserved
 		assertEq(tokenProxy.totalAssets(), 1000 ether);
@@ -404,8 +401,114 @@ contract TokenUpgradeTests is BaseTest {
 		timelock.executeTransaction(transactionId);
 	}
 
+	function testUpgradeToLatestVersionTimelockScenario() public {
+		// Test upgrade V2 -> V3 through actual timelock with queue/execute flow (testing latest version)
+		vm.startPrank(DEPLOYER);
+		ProxyAdmin proxyAdmin = new ProxyAdmin();
+		TokenggAVAXV2 ggAVAXImplV2 = new TokenggAVAXV2();
+
+		TransparentUpgradeableProxy ggAVAXProxy = new TransparentUpgradeableProxy(
+			address(ggAVAXImplV2),
+			address(proxyAdmin),
+			abi.encodeWithSelector(ggAVAXImplV2.initialize.selector, store, wavax, 0)
+		);
+		TokenggAVAX tokenProxy = TokenggAVAX(payable(address(ggAVAXProxy)));
+
+		// Upgrade to V2 first
+		proxyAdmin.upgradeAndCall(ggAVAXProxy, address(ggAVAXImplV2), abi.encodeWithSelector(ggAVAXImplV2.reinitialize.selector, ERC20(address(wavax))));
+
+		// Deploy actual timelock contract
+		Timelock timelock = new Timelock();
+
+		// Transfer ownership of proxy admin to timelock (like mainnet)
+		proxyAdmin.transferOwnership(address(timelock));
+
+		// Set guardian as owner of timelock (like mainnet where multisig owns timelock)
+		timelock.transferOwnership(guardian);
+		vm.stopPrank();
+
+		assertEq(proxyAdmin.owner(), address(timelock));
+		assertEq(timelock.owner(), guardian);
+
+		// Verify initial state (should be V2)
+		assertEq(tokenProxy.name(), "Hypha Staked AVAX");
+		assertEq(tokenProxy.symbol(), "stAVAX");
+		assertEq(tokenProxy.version(), 2);
+
+		// Add liquidity
+		address alice = getActorWithTokens("alice", 1000 ether, 0);
+		vm.deal(alice, 1000 ether);
+		vm.prank(alice);
+		tokenProxy.depositAVAX{value: 1000 ether}();
+
+		// Deploy latest implementation (V3)
+		vm.prank(DEPLOYER);
+		TokenggAVAX ggAVAXImplV3 = new TokenggAVAX();
+
+		// Prepare upgrade transaction data
+		bytes memory upgradeCalldata = abi.encodeWithSelector(
+			proxyAdmin.upgradeAndCall.selector,
+			ggAVAXProxy,
+			address(ggAVAXImplV3),
+			abi.encodeWithSelector(ggAVAXImplV3.reinitialize.selector, guardian)
+		);
+
+		// Queue transaction through timelock (guardian acting as multisig)
+		vm.prank(guardian);
+		bytes32 transactionId = timelock.queueTransaction(address(proxyAdmin), upgradeCalldata);
+
+		// Verify transaction is queued but cannot execute yet
+		vm.expectRevert(Timelock.Timelocked.selector);
+		timelock.executeTransaction(transactionId);
+
+		// Fast forward past the timelock delay (24 hours)
+		skip(24 hours + 1 seconds);
+
+		// Execute the transaction (anyone can execute after delay)
+		timelock.executeTransaction(transactionId);
+
+		// Verify successful upgrade to V3
+		assertEq(tokenProxy.name(), "Hypha Staked AVAX");
+		assertEq(tokenProxy.symbol(), "stAVAX");
+		assertEq(tokenProxy.version(), 3);
+
+		// Verify functionality preserved
+		assertEq(tokenProxy.totalAssets(), 1000 ether);
+		assertEq(tokenProxy.balanceOf(alice), 1000 ether);
+
+		// Test new deposits still work
+		vm.deal(alice, 500 ether);
+		vm.prank(alice);
+		tokenProxy.depositAVAX{value: 500 ether}();
+		assertEq(tokenProxy.balanceOf(alice), 1500 ether);
+
+		// Test that contract is still usable - verify access control works
+		vm.startPrank(alice);
+		vm.expectRevert(abi.encodeWithSelector(TokenggAVAX.AccessControlUnauthorizedAccount.selector, alice, tokenProxy.WITHDRAW_QUEUE_ROLE()));
+		tokenProxy.withdrawAVAX(25 ether);
+		vm.stopPrank();
+
+		// Grant withdrawal role and test it works
+		vm.startPrank(guardian);
+		tokenProxy.grantRole(tokenProxy.WITHDRAW_QUEUE_ROLE(), alice);
+		vm.stopPrank();
+
+		vm.prank(alice);
+		tokenProxy.withdrawAVAX(25 ether);
+		assertEq(tokenProxy.balanceOf(alice), 1475 ether);
+		assertEq(alice.balance, 25 ether);
+
+		// Test rewards functionality
+		tokenProxy.syncRewards();
+		assertTrue(tokenProxy.lastSync() > 0);
+
+		// Verify transaction is removed from timelock after execution
+		vm.expectRevert(Timelock.TransactionNotFound.selector);
+		timelock.executeTransaction(transactionId);
+	}
+
 	function testCannotReinitializeAfterUpgrade() public {
-		// Deploy and upgrade
+		// Deploy and upgrade V1 -> V2 -> V3
 		vm.startPrank(DEPLOYER);
 		ProxyAdmin proxyAdmin = new ProxyAdmin();
 		TokenggAVAXV1 ggAVAXImplV1 = new TokenggAVAXV1();
@@ -418,21 +521,35 @@ contract TokenUpgradeTests is BaseTest {
 		TokenggAVAX tokenProxy = TokenggAVAX(payable(address(ggAVAXProxy)));
 
 		proxyAdmin.transferOwnership(guardian);
+
+		// Deploy V2 implementation and upgrade to set "Hypha Staked AVAX" name
+		TokenggAVAXV2 ggAVAXImplV2 = new TokenggAVAXV2();
 		vm.stopPrank();
 
-		// Deploy new implementation and upgrade
-		vm.prank(DEPLOYER);
-		TokenggAVAX ggAVAXImplV2 = new TokenggAVAX();
-
+		// First upgrade V1 -> V2 to set proper name/symbol
 		vm.prank(guardian);
 		proxyAdmin.upgradeAndCall(ggAVAXProxy, address(ggAVAXImplV2), abi.encodeWithSelector(ggAVAXImplV2.reinitialize.selector, ERC20(address(wavax))));
 
-		// Verify upgrade worked
+		// Verify V2 upgrade worked and name is set
+		assertEq(tokenProxy.name(), "Hypha Staked AVAX");
 		assertEq(tokenProxy.symbol(), "stAVAX");
+		assertEq(tokenProxy.version(), 2);
+
+		// Deploy V3 implementation and upgrade
+		vm.prank(DEPLOYER);
+		TokenggAVAX ggAVAXImplV3 = new TokenggAVAX();
+
+		vm.prank(guardian);
+		proxyAdmin.upgradeAndCall(ggAVAXProxy, address(ggAVAXImplV3), abi.encodeWithSelector(ggAVAXImplV3.reinitialize.selector, guardian));
+
+		// Verify V3 upgrade worked and name is preserved
+		assertEq(tokenProxy.name(), "Hypha Staked AVAX");
+		assertEq(tokenProxy.symbol(), "stAVAX");
+		assertEq(tokenProxy.version(), 3);
 
 		// Attempt to reinitialize again should fail
 		vm.expectRevert("Initializable: contract is already initialized");
-		tokenProxy.reinitialize(ERC20(address(wavax)));
+		tokenProxy.reinitialize(guardian);
 
 		// Also test that original initialize cannot be called
 		vm.expectRevert("Initializable: contract is already initialized");

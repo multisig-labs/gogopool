@@ -16,22 +16,29 @@ just test
 
 Most commands used in the project are in the `Justfile`. To get a list of whats available type `just`
 
-## Hardhat Deploy
+## Deployment
 
-A deploy scripts in `scripts/` can be used to deploy and register all of the GoGo contracts.
+Contracts are deployed using Forge scripts. The main deployment commands are:
 
-`just deploy-base`
-`just deploy`
+`just deploy` - Deploy contracts to the configured network
+`just forge-script <script-name>` - Execute a specific Forge script
 
-## Hardhat Tasks
+Key deployment scripts:
+- `upgrade-liquid-staking-system.s.sol` - Upgrades TokenggAVAX, deploys WithdrawQueue and TokenpstAVAX
 
-The `tasks` directory is automatically loaded, and all defined tasks can be run from the command line.
+## Testing
 
-`just task` will show you all the available tasks with a description
+Run all tests: `just test`
+Run specific contract tests: `just test <ContractName>`
+Run fork tests: `just test-fork`
+Run tests with coverage: `npx hardhat coverage`
 
-`just task <taskname> <args>`
+## Hardhat Tasks (Legacy)
 
-`just task help <taskname>`
+The `tasks` directory contains legacy Hardhat tasks that can be run via:
+
+`just task` - Show all available tasks
+`just task <taskname> <args>` - Run a specific task
 
 ## Debugging
 

@@ -29,12 +29,9 @@ clean:
 	rm -rf deployed/43112-addresses.json
 	rm -rf broadcast/**/43112
 
-# Compile the project with hardhat
-compile:
-  npx hardhat compile
-
-# Compile the project with hardhat
-build: compile
+# Compile the project with forge
+build:
+  forge build
 
 # Deploy contracts to ETH_RPC_URL
 deploy: (_ping ETH_RPC_URL)

@@ -88,16 +88,19 @@ contract MultisigManagerTest is BaseTest {
 
 	function testFindActive() public {
 		// Disable the global one
-		vm.startPrank(guardian);
-		multisigMgr.disableMultisig(address(rialto));
 		address rialto1 = getActor("rialto1");
+		address rialto2 = getActor("rialto2");
+
+		vm.startPrank(guardian);
+
+		multisigMgr.disableMultisig(address(rialto));
 		multisigMgr.registerMultisig(rialto1);
 		multisigMgr.enableMultisig(rialto1);
-		address rialto2 = getActor("rialto2");
 		multisigMgr.registerMultisig(rialto2);
 		multisigMgr.enableMultisig(rialto2);
 		multisigMgr.disableMultisig(rialto1);
 		vm.stopPrank();
+
 		address ms = multisigMgr.requireNextActiveMultisig();
 		assertEq(rialto2, ms);
 	}
