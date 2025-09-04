@@ -10,6 +10,7 @@ import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {WithdrawQueue} from "../WithdrawQueue.sol";
 import {IWAVAX} from "../../interface/IWAVAX.sol";
+import {FixedPointMathLib} from "@rari-capital/solmate/src/utils/FixedPointMathLib.sol";
 
 interface IYieldDonor {
 	function donateYield(uint256 sharesToBurn, bytes32 source) external;
@@ -25,20 +26,29 @@ contract TokenpstAVAX is ERC20Upgradeable, OwnableUpgradeable, PausableUpgradeab
 	using SafeERC20 for IERC20;
 	using SafeERC20 for IERC4626;
 	using SafeERC20 for IWAVAX;
+	using FixedPointMathLib for uint256;
 
 	address public vault;
 	address public underlyingAsset;
 	address public withdrawQueue;
 
+	uint256 public stripYieldFeeBips; // Fee percentage in basis points (0-10000)
+	address public stripYieldFeeRecipient; // Address to receive fee shares
+
 	event Deposited(address indexed user, uint256 avaxAmount, uint256 vaultShares);
 	event Withdrawn(address indexed user, uint256 pstShares, uint256 vaultShares);
 	event WithdrawnViaQueue(address indexed user, uint256 pstShares, uint256 vaultShares, uint256 requestId);
-	event YieldStripped(uint256 excessShares, uint256 avaxAmount);
+	event YieldStripped(uint256 excessShares, uint256 feeShares, uint256 burnShares, uint256 avaxAmount);
+	event StripYieldFeeCollected(uint256 feeShares, address indexed recipient);
+	event StripYieldFeeBipsUpdated(uint256 oldFeeBips, uint256 newFeeBips);
+	event StripYieldFeeRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
 
 	error InsufficientBalance();
 	error InvalidVault();
 	error NoYieldToStrip();
 	error ZeroAmount();
+	error InvalidFeeBips();
+	error InvalidFeeRecipient();
 
 	/// @custom:oz-upgrades-unsafe-allow constructor
 	constructor() {
@@ -144,45 +154,90 @@ contract TokenpstAVAX is ERC20Upgradeable, OwnableUpgradeable, PausableUpgradeab
 		emit WithdrawnViaQueue(msg.sender, assets, vaultShares, requestId);
 	}
 
-	/// @notice Calculate how much excess vault shares the contract has, and send them to vault to increase it's yield
-	/// @return excessShares Amount of excess shares stripped, or 0 if no excess
-	function stripYield() public whenNotPaused returns (uint256 excessShares) {
-		excessShares = getExcessShares();
-		if (excessShares == 0) return 0;
+	/// @notice Calculate how much excess vault shares the contract has, collect fee, and send remainder to vault to increase yield
+	/// @return feeShares Amount of excess shares taken as a fee (fee)
+	/// @return burnShares Amount of excess shares burned to increase yield (burn)
+	function stripYield() public whenNotPaused returns (uint256 feeShares, uint256 burnShares) {
+		(feeShares, burnShares) = getExcessShares();
+		uint256 totalExcess = feeShares + burnShares;
 
-		// Call depositAdditionalYield on the vault to burn the shares and emit event
-		IYieldDonor(payable(vault)).donateYield(excessShares, "pstAVAX");
+		if (totalExcess == 0) return (0, 0);
 
-		uint256 avaxAmount = IERC4626(vault).convertToAssets(excessShares);
-		emit YieldStripped(excessShares, avaxAmount);
+		// Burn remaining shares to boost yield
+		if (burnShares > 0) {
+			IYieldDonor(payable(vault)).donateYield(burnShares, "pstAVAX");
+		}
+
+		uint256 avaxAmount = IERC4626(vault).convertToAssets(totalExcess);
+
+		// Send fee shares to recipient (if any)
+		if (feeShares > 0 && stripYieldFeeRecipient != address(0)) {
+			IERC4626(vault).safeTransfer(stripYieldFeeRecipient, feeShares);
+			emit StripYieldFeeCollected(feeShares, stripYieldFeeRecipient);
+		}
+
+		emit YieldStripped(totalExcess, feeShares, burnShares, avaxAmount);
 	}
 
-	/// @notice Calculate how much excess vault shares the contract has
-	function getExcessShares() public view returns (uint256) {
+	/// @notice Calculate excess shares split between fee and burn portions
+	/// @dev When fee > 0, calculates total shares to extract such that burning burnShares achieves target exchange rate
+	/// @return feeShares Amount of shares to collect as fee
+	/// @return burnShares Amount of shares to burn for yield boost
+	function getExcessShares() public view returns (uint256 feeShares, uint256 burnShares) {
 		uint256 pstAVAXVaultShares = IERC4626(vault).balanceOf(address(this));
 		uint256 totalPstTokens = totalSupply();
 
-		if (totalPstTokens == 0) return pstAVAXVaultShares;
+		if (totalPstTokens == 0) return (0, pstAVAXVaultShares);
 
 		uint256 ggAVAXTotalShares = IERC4626(vault).totalSupply();
 		uint256 ggAVAXTotalAssets = IERC4626(vault).totalAssets();
 
-		// Excess shares calculation:
-		// If we burn X shares, remaining shares = totalVaultShares - X
-		// New total shares in vault = ggAVAXTotalShares - X
-		// New share price = ggAVAXTotalAssets / (ggAVAXTotalShares - X)
-		// We want: (pstAVAXVaultShares - X) * newSharePrice = totalPstTokens
-		// Which gives us: (totalVaultShares - X) * ggAVAXTotalAssets / (ggAVAXTotalShares - X) = totalPstTokens
-		// Solving for X: X = (totalVaultShares * ggAVAXTotalAssets - totalPstTokens * ggAVAXTotalShares) / (ggAVAXTotalAssets - totalPstTokens)
+		if (ggAVAXTotalAssets <= totalPstTokens) return (0, 0); // No excess if no yield
+		if (pstAVAXVaultShares * ggAVAXTotalAssets < totalPstTokens * ggAVAXTotalShares) return (0, 0);
 
-		if (ggAVAXTotalAssets <= totalPstTokens) return 0; // No excess if no yield
-
-		if (pstAVAXVaultShares * ggAVAXTotalAssets < totalPstTokens * ggAVAXTotalShares) return 0;
-
+		uint256 totalExcess;
 		uint256 numerator = pstAVAXVaultShares * ggAVAXTotalAssets - totalPstTokens * ggAVAXTotalShares;
-		uint256 denominator = ggAVAXTotalAssets - totalPstTokens;
 
-		return numerator / denominator;
+		// If no fee, use original calculation
+		if (stripYieldFeeBips == 0 || stripYieldFeeRecipient == address(0)) {
+			uint256 simpleDenominator = ggAVAXTotalAssets - totalPstTokens;
+			totalExcess = numerator / simpleDenominator;
+			return (0, totalExcess);
+		}
+
+		// Modified calculation accounting for fee
+		// E = (S×A - T×G) / (A - T×(1 - feePct))
+		// where feePct = stripYieldFeeBips / 10000
+		uint256 burnPct = 10000 - stripYieldFeeBips; // basis points
+		uint256 denominator = ggAVAXTotalAssets - totalPstTokens.mulDivDown(burnPct, 10000);
+
+		// Check for potential division issues
+		if (denominator == 0) return (0, 0);
+
+		totalExcess = numerator / denominator;
+
+		// Split into fee and burn portions
+		feeShares = totalExcess.mulDivDown(stripYieldFeeBips, 10000);
+		burnShares = totalExcess - feeShares;
+	}
+
+	/// @notice Set the fee percentage for stripYield in basis points
+	/// @param _feeBips Fee percentage in basis points (0-10000, where 10000 = 100%)
+	function setStripYieldFeeBips(uint256 _feeBips) external onlyOwner {
+		if (_feeBips > 10000) revert InvalidFeeBips();
+		if (_feeBips > 0 && stripYieldFeeRecipient == address(0)) revert InvalidFeeRecipient();
+		uint256 oldFeeBips = stripYieldFeeBips;
+		stripYieldFeeBips = _feeBips;
+		emit StripYieldFeeBipsUpdated(oldFeeBips, _feeBips);
+	}
+
+	/// @notice Set the recipient address for stripYield fees
+	/// @param _recipient Address to receive fee shares
+	function setStripYieldFeeRecipient(address _recipient) external onlyOwner {
+		if (stripYieldFeeBips > 0 && _recipient == address(0)) revert InvalidFeeRecipient();
+		address oldRecipient = stripYieldFeeRecipient;
+		stripYieldFeeRecipient = _recipient;
+		emit StripYieldFeeRecipientUpdated(oldRecipient, _recipient);
 	}
 
 	/// @notice Emergency pause function

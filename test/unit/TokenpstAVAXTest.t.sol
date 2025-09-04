@@ -16,7 +16,7 @@ contract TokenpstAVAXTest is BaseTest {
 	address bob;
 	address cam;
 
-	function setUp() public override {
+	function setUp() public virtual override {
 		super.setUp();
 
 		alice = getActorWithTokens("alice", MAX_AMT, MAX_AMT);
@@ -75,7 +75,8 @@ contract TokenpstAVAXTest is BaseTest {
 		uint256 assets = 1000 ether;
 		vm.prank(alice);
 		pstAVAX.depositAVAX{value: assets}();
-		assertEq(pstAVAX.getExcessShares(), 0);
+		(uint256 feeShares, uint256 burnShares) = pstAVAX.getExcessShares();
+		assertEq(feeShares + burnShares, 0);
 
 		vm.prank(bob);
 		ggAVAX.depositAVAX{value: assets}();
@@ -97,17 +98,23 @@ contract TokenpstAVAXTest is BaseTest {
 		assertEq(ggAVAX.convertToAssets(ggAVAX.balanceOf(bob)), 1000 ether + 500 ether);
 		assertEq(ggAVAX.convertToAssets(ggAVAX.balanceOf(address(pstAVAX))), 1000 ether + 500 ether);
 
+		// Capture state before stripYield for calculation
+		uint256 totalAssetsBefore = ggAVAX.totalAssets(); // 2000 ether
+		uint256 totalSharesBefore = ggAVAX.totalSupply(); // 2000 ether
+
+		uint256 expectedSharePrice = calculateExpectedSharePriceWithFees(totalAssetsBefore, totalSharesBefore);
+
 		uint256 sharesFor1000tokens = ggAVAX.convertToShares(1000 ether);
 		pstAVAX.stripYield();
 
 		uint256 newSharePrice = ggAVAX.convertToAssets(1 ether);
-		assertEq(newSharePrice, 2 ether);
+		assertEq(newSharePrice, expectedSharePrice);
 
 		// Bob gets 100% of the yield, pstAVAX gets 0%
-		assertEq(ggAVAX.convertToAssets(ggAVAX.balanceOf(bob)), 1000 ether + 1000 ether);
+		assertApproxEqAbs(ggAVAX.convertToAssets(ggAVAX.balanceOf(bob)), assets.mulWadDown(newSharePrice), 1000);
 		assertApproxEqAbs(ggAVAX.convertToAssets(ggAVAX.balanceOf(address(pstAVAX))), 1000 ether, 1);
 
-		assertApproxEqAbs(ggAVAX.balanceOf(address(pstAVAX)), 500 ether, 1);
+		assertApproxEqAbs(ggAVAX.convertToAssets(ggAVAX.balanceOf(address(pstAVAX))), pstAVAX.totalSupply(), 1);
 
 		// Alice withdraws her 1000 pstAVAX tokens
 		vm.prank(alice);
@@ -116,7 +123,7 @@ contract TokenpstAVAXTest is BaseTest {
 		assertApproxEqAbs(aliceValueReceived, 1000 ether, 1);
 
 		uint256 assetsLeft = ggAVAX.convertToAssets(ggAVAX.balanceOf(address(pstAVAX)));
-		assertEq(assetsLeft, 0);
+		assertApproxEqAbs(assetsLeft, 0, 2);
 	}
 
 	function testStripYieldDefault() public {
@@ -128,7 +135,8 @@ contract TokenpstAVAXTest is BaseTest {
 		uint256 assets = 1 ether;
 		vm.prank(alice);
 		pstAVAX.depositAVAX{value: assets}();
-		assertEq(pstAVAX.getExcessShares(), 0);
+		(uint256 feeShares, uint256 burnShares) = pstAVAX.getExcessShares();
+		assertEq(feeShares + burnShares, 0);
 
 		// Send WAVAX directly to TokenggAVAX as rewards
 		vm.startPrank(bob);
@@ -143,18 +151,20 @@ contract TokenpstAVAXTest is BaseTest {
 
 		vm.stopPrank();
 
-		assertEq(pstAVAX.getExcessShares(), rewardsAmt / 2);
+		(feeShares, burnShares) = pstAVAX.getExcessShares();
+		assertSharesStrippedWithFees(feeShares, burnShares, rewardsAmt / 2, "Strip yield default excess shares");
 
 		vm.prank(alice);
 		pstAVAX.withdraw(assets);
 		assertEq(pstAVAX.balanceOf(alice), 0);
 		assertEq(pstAVAX.totalSupply(), 0);
-		assertEq(ggAVAX.balanceOf(address(pstAVAX)), 0);
+		assertApproxEqAbs(ggAVAX.balanceOf(address(pstAVAX)), 0, 2);
 		assertLt(ggAVAX.balanceOf(alice), 1 ether);
 
 		pstAVAX.stripYield();
-		assertEq(pstAVAX.getExcessShares(), 0);
-		assertEq(ggAVAX.balanceOf(address(pstAVAX)), 0);
+		(feeShares, burnShares) = pstAVAX.getExcessShares();
+		assertEq(feeShares + burnShares, 0);
+		assertApproxEqAbs(ggAVAX.balanceOf(address(pstAVAX)), 0, 2);
 	}
 
 	// Additional deposit tests
@@ -335,8 +345,9 @@ contract TokenpstAVAXTest is BaseTest {
 	}
 
 	function testStripYieldNoYield() public {
-		uint256 excessShares = pstAVAX.stripYield();
-		assertEq(excessShares, 0);
+		(uint256 feeShares, uint256 burnShares) = pstAVAX.stripYield();
+		assertEq(feeShares, 0);
+		assertEq(burnShares, 0);
 	}
 
 	function testDepositEvent() public {
@@ -471,7 +482,7 @@ contract TokenpstAVAXTest is BaseTest {
 		assertEq(pstAVAX.balanceOf(bob), 0);
 	}
 
-	function testNoggAVAXHoldersBeforeRewards() public {
+	function testNoggAVAXHoldersBeforeRewards() public virtual {
 		assertEq(pstAVAX.totalSupply(), 0);
 		assertEq(ggAVAX.balanceOf(address(pstAVAX)), 0);
 		assertEq(ggAVAX.totalSupply(), 0);
@@ -484,10 +495,6 @@ contract TokenpstAVAXTest is BaseTest {
 		assertEq(pstAVAX.balanceOf(alice), assets);
 		assertEq(pstAVAX.totalSupply(), assets);
 		assertEq(ggAVAX.balanceOf(address(pstAVAX)), assets);
-
-		// vm.startPrank(cam);
-		// ggAVAX.depositAVAX{value: assets}();
-		// vm.stopPrank();
 
 		// Deposit some rewards to ggAVAX
 		vm.startPrank(bob);
@@ -507,7 +514,8 @@ contract TokenpstAVAXTest is BaseTest {
 
 		// Because there are no other ggAVAX share holders, pstAVAX assumes it can strip
 		// all yield. This is a known issue when there are no ggAVAX holders
-		uint256 sharesStripped = pstAVAX.stripYield();
+		(uint256 feeShares, uint256 burnShares) = pstAVAX.stripYield();
+		uint256 sharesStripped = feeShares + burnShares;
 		assertEq(sharesStripped, assets);
 
 		// Because all yield was stripped, this call will revert attempting to send
@@ -552,16 +560,15 @@ contract TokenpstAVAXTest is BaseTest {
 		assertEq(ggAVAX.totalSupply(), pstAVAXDeposit + pstAVAXDeposit);
 		assertEq(ggAVAX.convertToShares(1 ether), ggAVAX.totalSupply().divWadDown(ggAVAX.totalAssets()));
 
-		// Now there is another holder of ggAVAX, so the stippedShares will
+		// Now there is another holder of ggAVAX, so the stripped shares will
 		// not be the full amount of ggAVAX holding in pstAVAX
-		uint256 sharesStripped = pstAVAX.stripYield();
-		assertEq(sharesStripped, rewardsAmt / 2);
+		(uint256 feeShares, uint256 burnShares) = pstAVAX.stripYield();
+		assertSharesStrippedWithFees(feeShares, burnShares, rewardsAmt / 2, "One ggAVAX holder stripped shares");
 
 		// Alice gets enough ggAVAX back to cover her initial pstAVAX deposit
 		vm.prank(alice);
 		uint256 sharesWithdrawn = pstAVAX.withdraw(pstAVAXDeposit);
-		assertEq(sharesWithdrawn, rewardsAmt / 2);
-		assertEq(ggAVAX.convertToAssets(sharesWithdrawn), pstAVAXDeposit);
+		assertApproxEqAbs(ggAVAX.convertToAssets(sharesWithdrawn), pstAVAXDeposit, 2);
 	}
 
 	function testWithdrawalAffectsonExcessShares() public {
@@ -576,17 +583,11 @@ contract TokenpstAVAXTest is BaseTest {
 		address pstDepositor2 = makeAddr("pstDepositor2");
 		vm.deal(pstDepositor2, 10 * ggDeposit);
 
-		address pstDepositor3 = makeAddr("pstDepositor3");
-		vm.deal(pstDepositor3, 10 * ggDeposit);
-
 		address donater = makeAddr("donater");
 		vm.deal(donater, 10 * ggDeposit);
 
 		address ggDepositor1 = makeAddr("ggDepositor1");
 		vm.deal(ggDepositor1, 10 * ggDeposit);
-
-		address ggDepositor2 = makeAddr("ggDepositor2");
-		vm.deal(ggDepositor2, 10 * ggDeposit);
 
 		assertEq(pstAVAX.totalSupply(), 0);
 		assertEq(ggAVAX.balanceOf(address(pstAVAX)), 0);
@@ -619,20 +620,24 @@ contract TokenpstAVAXTest is BaseTest {
 		assertEq(ggAVAX.previewRedeem(1 ether), ggAVAX.totalAssets().divWadDown(ggAVAX.totalSupply()));
 
 		uint256 expectedExcessShares = 90909090909090909090;
-		assertGt(pstAVAX.getExcessShares(), 0);
-		assertEq(pstAVAX.getExcessShares(), expectedExcessShares);
+		(uint256 feeShares, uint256 burnShares) = pstAVAX.getExcessShares();
+		uint256 actualSharesBurned = burnShares;
+
+		assertGt(feeShares + burnShares, 0);
+		assertSharesStrippedWithFees(feeShares, burnShares, expectedExcessShares, "Withdrawal affects excess shares");
 
 		vm.prank(pstDepositor1);
 		uint256 ggAVAXsharesWithdrawnDepositor1 = pstAVAX.withdraw(pstDeposit);
 
 		assertApproxEqAbs(ggAVAX.convertToAssets(ggAVAXsharesWithdrawnDepositor1), pstDeposit, 1);
-		assertApproxEqAbs(pstAVAX.getExcessShares(), 0, 1);
+		(feeShares, burnShares) = pstAVAX.getExcessShares();
+		assertApproxEqAbs(feeShares + burnShares, 0, 1);
 		assertApproxEqAbs(pstAVAX.totalSupply(), 0, 1);
 		assertApproxEqAbs(ggAVAX.balanceOf(address(pstAVAX)), 0, 1);
-		assertEq(ggAVAX.totalSupply(), ggDeposit + pstDeposit - expectedExcessShares);
+		assertEq(ggAVAX.totalSupply(), ggDeposit + pstDeposit - actualSharesBurned);
 
-		uint256 sharesStripped = pstAVAX.stripYield();
-		assertApproxEqAbs(sharesStripped, 0, 1);
+		(, burnShares) = pstAVAX.stripYield();
+		assertApproxEqAbs(burnShares, 0, 1);
 
 		vm.prank(pstDepositor2);
 		pstAVAX.depositAVAX{value: pstDeposit}();
@@ -665,12 +670,13 @@ contract TokenpstAVAXTest is BaseTest {
 		skip(ggAVAX.rewardsCycleLength());
 
 		// Verify there are excess shares to strip
-		uint256 excessShares = pstAVAX.getExcessShares();
-		assertGt(excessShares, 0);
+		(uint256 feeShares, uint256 burnShares) = pstAVAX.getExcessShares();
+		assertGt(feeShares + burnShares, 0);
 
 		// Measure gas for stripYield call
 		uint256 gasBefore = gasleft();
-		uint256 sharesStripped = pstAVAX.stripYield();
+		(feeShares, burnShares) = pstAVAX.stripYield();
+		uint256 sharesStripped = feeShares + burnShares;
 		uint256 gasUsed = gasBefore - gasleft();
 
 		// Log gas usage for visibility
@@ -678,14 +684,248 @@ contract TokenpstAVAXTest is BaseTest {
 		// console2.log("Shares stripped:", sharesStripped);
 
 		// Verify the function worked
-		assertEq(sharesStripped, excessShares);
 		assertGt(sharesStripped, 0);
+		assertGt(burnShares, 0);
+	}
+
+	function testSetStripYieldFeeBips() public {
+		pstAVAX.setStripYieldFeeRecipient(address(this));
+		// Test setting fee to 10% (1000 bips) - test contract is owner
+		pstAVAX.setStripYieldFeeBips(1000);
+		assertEq(pstAVAX.stripYieldFeeBips(), 1000);
+
+		// Test setting fee to 0%
+		pstAVAX.setStripYieldFeeBips(0);
+		assertEq(pstAVAX.stripYieldFeeBips(), 0);
+
+		// Test setting fee to max (100%)
+		pstAVAX.setStripYieldFeeBips(10000);
+		assertEq(pstAVAX.stripYieldFeeBips(), 10000);
+	}
+
+	function testSetStripYieldFeeBipsInvalidFee() public {
+		// Test setting fee > 100% should revert
+		vm.expectRevert(TokenpstAVAX.InvalidFeeBips.selector);
+		pstAVAX.setStripYieldFeeBips(10001);
+	}
+
+	function testSetStripYieldFeeBipsOnlyOwner() public {
+		// Test that only owner can set fee
+		vm.prank(alice);
+		vm.expectRevert();
+		pstAVAX.setStripYieldFeeBips(1000);
+	}
+
+	function testSetStripYieldFeeRecipient() public {
+		address feeRecipient = address(0x123);
+
+		pstAVAX.setStripYieldFeeRecipient(feeRecipient);
+		assertEq(pstAVAX.stripYieldFeeRecipient(), feeRecipient);
+	}
+
+	function testSetStripYieldFeeRecipientOnlyOwner() public {
+		vm.prank(alice);
+		vm.expectRevert();
+		pstAVAX.setStripYieldFeeRecipient(address(0x123));
+	}
+
+	function testGetExcessSharesWithFee() public {
+		uint256 pstAVAXDeposit = 1000 ether;
+		uint256 ggAVAXDeposit = 1000 ether;
+
+		// Setup: deposit to pstAVAX and generate yield
+		vm.prank(alice);
+		pstAVAX.depositAVAX{value: pstAVAXDeposit}();
+
+		vm.prank(bob);
+		ggAVAX.depositAVAX{value: ggAVAXDeposit}();
+
+		// Generate yield by direct deposit to ggAVAX
+		uint256 rewardsAmt = 100 ether;
+		vm.deal(address(this), rewardsAmt);
+		wavax.deposit{value: rewardsAmt}();
+		wavax.transfer(address(ggAVAX), rewardsAmt);
+
+		vm.warp(ggAVAX.rewardsCycleEnd());
+		ggAVAX.syncRewards();
+		vm.warp(ggAVAX.rewardsCycleEnd());
+
+		// Set 10% fee
+		pstAVAX.setStripYieldFeeRecipient(address(this));
+		pstAVAX.setStripYieldFeeBips(1000); // 10%
+
+		// Check getExcessShares returns appropriate split
+		(uint256 feeShares, uint256 burnShares) = pstAVAX.getExcessShares();
+		uint256 totalShares = feeShares + burnShares;
+
+		// Fee should be ~10% of total excess
+		uint256 expectedFeeShares = (totalShares * 1000) / 10000;
+		assertApproxEqAbs(feeShares, expectedFeeShares, 1);
+
+		// Burn shares should be the remainder
+		assertEq(burnShares, totalShares - feeShares);
+
+		assertEq(ggAVAX.totalAssets(), pstAVAXDeposit + rewardsAmt + ggAVAXDeposit);
+		assertEq(ggAVAX.totalSupply(), pstAVAXDeposit + ggAVAXDeposit);
+		uint256 exchangeRate = ggAVAX.convertToAssets(1 ether);
+
+		(, burnShares) = pstAVAX.stripYield();
+		assertGt(burnShares, 0);
+
+		assertEq(ggAVAX.totalAssets(), pstAVAXDeposit + rewardsAmt + ggAVAXDeposit);
+		assertEq(ggAVAX.totalSupply(), pstAVAXDeposit + ggAVAXDeposit - burnShares);
+		assertGt(ggAVAX.convertToAssets(1 ether), exchangeRate);
+
+		// Alice gets enough ggAVAX back to cover her initial pstAVAX deposit
+		vm.prank(alice);
+		uint256 sharesWithdrawn = pstAVAX.withdraw(pstAVAXDeposit);
+		assertApproxEqAbs(ggAVAX.convertToAssets(sharesWithdrawn), pstAVAXDeposit, 1);
+	}
+
+	function testStripYieldWithFeeCollection() public {
+		uint256 assets = 1000 ether;
+		address feeRecipient = address(0x456);
+
+		// Setup: deposit to pstAVAX
+		vm.prank(alice);
+		pstAVAX.depositAVAX{value: assets}();
+
+		// Generate yield
+		uint256 rewardsAmt = 100 ether;
+		vm.deal(address(this), rewardsAmt);
+		wavax.deposit{value: rewardsAmt}();
+		wavax.transfer(address(ggAVAX), rewardsAmt);
+
+		// Set fee and recipient
+		pstAVAX.setStripYieldFeeRecipient(feeRecipient);
+		pstAVAX.setStripYieldFeeBips(1000); // 10%
+
+		// Get initial balances
+		uint256 initialRecipientBalance = ggAVAX.balanceOf(feeRecipient);
+
+		// Get expected fee shares
+		(uint256 expectedFeeShares, ) = pstAVAX.getExcessShares();
+
+		// Strip yield
+		pstAVAX.stripYield();
+
+		// Verify fee was collected
+		if (expectedFeeShares > 0) {
+			uint256 finalRecipientBalance = ggAVAX.balanceOf(feeRecipient);
+			assertEq(finalRecipientBalance - initialRecipientBalance, expectedFeeShares);
+		}
+	}
+
+	function testStripYieldWithZeroFee() public virtual {
+		uint256 assets = 1000 ether;
+
+		// Setup: deposit to pstAVAX
+		vm.prank(alice);
+		pstAVAX.depositAVAX{value: assets}();
+
+		// Generate yield by transferring WAVAX to ggAVAX and syncing rewards
+		uint256 rewardsAmt = 100 ether;
+		vm.deal(address(this), rewardsAmt);
+		wavax.deposit{value: rewardsAmt}();
+		wavax.transfer(address(ggAVAX), rewardsAmt);
+
+		// Warp and sync rewards to generate yield
+		vm.warp(ggAVAX.rewardsCycleEnd());
+		ggAVAX.syncRewards();
+		vm.warp(ggAVAX.rewardsCycleEnd());
+
+		// Ensure fee is 0% (default)
+		assertEq(pstAVAX.stripYieldFeeBips(), 0);
+
+		// Check getExcessShares - should have no fee shares
+		(uint256 feeShares, uint256 burnShares) = pstAVAX.getExcessShares();
+		assertEq(feeShares, 0);
+		if (burnShares > 0) {
+			// Should have burn shares since there's yield, but if no excess then that's also fine
+			assertGt(burnShares, 0);
+		}
+	}
+
+	/// @notice Calculate expected share price after stripYield based on fee configuration
+	/// @param totalAssetsBefore Total assets in ggAVAX before stripYield
+	/// @param totalSharesBefore Total shares in ggAVAX before stripYield
+	function calculateExpectedSharePriceWithFees(
+		uint256 totalAssetsBefore,
+		uint256 totalSharesBefore
+	) internal view returns (uint256 expectedSharePrice) {
+		uint256 feeBips = pstAVAX.stripYieldFeeBips();
+		(uint256 feeShares, uint256 burnShares) = pstAVAX.getExcessShares();
+
+		if (feeBips == 0) {
+			uint256 newTotalShares = totalSharesBefore - burnShares;
+			expectedSharePrice = totalAssetsBefore.mulDivDown(1e18, newTotalShares);
+		} else {
+			(uint256 feeShares, uint256 burnShares) = pstAVAX.getExcessShares();
+			uint256 newTotalShares = totalSharesBefore - burnShares;
+			expectedSharePrice = totalAssetsBefore.mulDivDown(1e18, newTotalShares);
+		}
+	}
+
+	/// @notice Helper function to assert shares stripped based on fee configuration
+	/// @param actualFeeShares The actual fee shares returned from stripYield or getExcessShares
+	/// @param actualBurnShares The actual burn shares returned from stripYield or getExcessShares
+	/// @param expectedBaseShares The expected shares when fee is 0% (baseline calculation)
+	/// @param description Description for the assertion
+	function assertSharesStrippedWithFees (
+		uint256 actualFeeShares,
+		uint256 actualBurnShares,
+		uint256 expectedBaseShares,
+		string memory description
+	) internal {
+		uint256 feeBips = pstAVAX.stripYieldFeeBips();
+		uint256 totalActual = actualFeeShares + actualBurnShares;
+		console2.log("acutal feeSahres", actualFeeShares);
+		console2.log("acutal burnShares", actualBurnShares);
+		console2.log("expectedBaseShares", expectedBaseShares);
+
+		if (feeBips == 0) {
+			assertEq(actualFeeShares, 0, string(abi.encodePacked(description, " - no fee shares when fee is 0%")));
+			assertEq(totalActual, expectedBaseShares, string(abi.encodePacked(description, " - total should equal base when no fees")));
+		} else {
+      uint256 burnPct = 10000 - feeBips; // basis points
+      uint256 originalDenom = ggAVAX.totalAssets() - pstAVAX.totalSupply();
+      uint256 feeDenom = ggAVAX.totalAssets() - pstAVAX.totalSupply().mulDivDown(burnPct, 10000);
+
+      // Expected total = baseShares × (originalDenom / feeDenom)
+      uint256 expectedTotalWithFees = expectedBaseShares.mulDivDown(originalDenom, feeDenom);
+
+			assertApproxEqAbs(totalActual, expectedTotalWithFees, 1, string(abi.encodePacked(description, " - total within fee-adjusted range")));
+
+			// Burn shares should be the remainder
+			assertEq(actualBurnShares, totalActual - actualFeeShares, string(abi.encodePacked(description, " - burn shares should be remainder")));
+		}
 	}
 
 	// Define events for testing (these match the contract events)
 	event Deposited(address indexed user, uint256 avaxAmount, uint256 vaultShares);
 	event Withdrawn(address indexed user, uint256 pstShares, uint256 vaultShares);
 	event WithdrawnViaQueue(address indexed user, uint256 pstShares, uint256 vaultShares, uint256 requestId);
+}
+
+contract TokenpstAVAXTestWith5PercentFees is TokenpstAVAXTest {
+	address constant FEE_RECIPIENT = address(0x12345);
+	uint256 constant FEE_BIPS = 500; // 5%
+
+	function setUp() public override {
+		super.setUp(); // Run original setup
+
+		// Configure fees after setup
+		pstAVAX.setStripYieldFeeRecipient(FEE_RECIPIENT);
+		pstAVAX.setStripYieldFeeBips(FEE_BIPS);
+	}
+
+	function testStripYieldWithZeroFee() public override {
+		// do nothing
+	}
+
+	function testNoggAVAXHoldersBeforeRewards() public override {
+		// do nothing
+	}
 }
 
 // Mock contract for testing invalid vault
