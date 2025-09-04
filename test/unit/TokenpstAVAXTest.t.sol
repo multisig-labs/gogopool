@@ -376,7 +376,7 @@ contract TokenpstAVAXTest is BaseTest {
 
 		// Withdraw via queue
 		vm.prank(alice);
-		(uint256 vaultShares, uint256 requestId) = pstAVAX.withdrawViaQueue(assets);
+		(uint256 vaultShares, uint256 requestId) = pstAVAX.withdrawViaQueue(assets, 0);
 
 		// Check return values
 		assertEq(vaultShares, expectedVaultShares);
@@ -398,13 +398,13 @@ contract TokenpstAVAXTest is BaseTest {
 	function testWithdrawViaQueueZeroAmount() public {
 		vm.expectRevert(TokenpstAVAX.ZeroAmount.selector);
 		vm.prank(alice);
-		pstAVAX.withdrawViaQueue(0);
+		pstAVAX.withdrawViaQueue(0, 0);
 	}
 
 	function testWithdrawViaQueueInsufficientBalance() public {
 		vm.expectRevert(TokenpstAVAX.InsufficientBalance.selector);
 		vm.prank(alice);
-		pstAVAX.withdrawViaQueue(1 ether);
+		pstAVAX.withdrawViaQueue(1 ether, 0);
 	}
 
 	function testWithdrawViaQueueWhenPaused() public {
@@ -417,7 +417,7 @@ contract TokenpstAVAXTest is BaseTest {
 
 		vm.expectRevert("Pausable: paused");
 		vm.prank(alice);
-		pstAVAX.withdrawViaQueue(assets);
+		pstAVAX.withdrawViaQueue(assets, 0);
 	}
 
 	function testWithdrawViaQueueEvent() public {
@@ -433,7 +433,7 @@ contract TokenpstAVAXTest is BaseTest {
 		emit WithdrawnViaQueue(alice, assets, expectedVaultShares, expectedRequestId);
 
 		vm.prank(alice);
-		pstAVAX.withdrawViaQueue(assets);
+		pstAVAX.withdrawViaQueue(assets, 0);
 	}
 
 	function testWithdrawViaQueueMultipleUsers() public {
@@ -449,10 +449,10 @@ contract TokenpstAVAXTest is BaseTest {
 
 		// Both users withdraw via queue
 		vm.prank(alice);
-		(uint256 vaultShares1, uint256 requestId1) = pstAVAX.withdrawViaQueue(assets1);
+		(uint256 vaultShares1, uint256 requestId1) = pstAVAX.withdrawViaQueue(assets1, 0);
 
 		vm.prank(bob);
-		(uint256 vaultShares2, uint256 requestId2) = pstAVAX.withdrawViaQueue(assets2);
+		(uint256 vaultShares2, uint256 requestId2) = pstAVAX.withdrawViaQueue(assets2, 0);
 
 		assertGt(requestId2, requestId1);
 

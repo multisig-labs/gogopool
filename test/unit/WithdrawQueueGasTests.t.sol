@@ -14,7 +14,7 @@ contract WithdrawQueueGasTests is BaseTest {
 	address private backgroundJob;
 
 	uint48 private constant UNSTAKE_DELAY = 7 days;
-	uint48 private constant EXPIRATION_DELAY = 14 days;
+	uint48 private constant MAX_EXPIRATION_DELAY = 14 days;
 
 	function setUp() public override {
 		super.setUp();
@@ -30,7 +30,7 @@ contract WithdrawQueueGasTests is BaseTest {
 		// Deploy WithdrawQueue
 		vm.startPrank(guardian);
 		WithdrawQueue withdrawQueueImpl = new WithdrawQueue();
-		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), address(store), UNSTAKE_DELAY, EXPIRATION_DELAY);
+		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), address(store), UNSTAKE_DELAY, MAX_EXPIRATION_DELAY);
 		TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(withdrawQueueImpl), address(proxyAdmin), initData);
 		withdrawQueue = WithdrawQueue(payable(address(proxy)));
 
@@ -146,7 +146,7 @@ contract WithdrawQueueGasTests is BaseTest {
 
 		// Create multiple requests
 		for (uint i = 0; i < 5; i++) {
-			withdrawQueue.requestUnstake(100 ether);
+			withdrawQueue.requestUnstake(100 ether, 0);
 		}
 		vm.stopPrank();
 
@@ -177,7 +177,7 @@ contract WithdrawQueueGasTests is BaseTest {
 		vm.startPrank(alice);
 		ggAVAX.depositAVAX{value: 1000 ether}();
 		ggAVAX.approve(address(withdrawQueue), type(uint256).max);
-		uint256 requestId = withdrawQueue.requestUnstake(100 ether);
+		uint256 requestId = withdrawQueue.requestUnstake(100 ether, 0);
 		vm.stopPrank();
 
 		// Cancel the pending request
@@ -194,7 +194,7 @@ contract WithdrawQueueGasTests is BaseTest {
 		vm.startPrank(alice);
 		ggAVAX.depositAVAX{value: 1000 ether}();
 		ggAVAX.approve(address(withdrawQueue), type(uint256).max);
-		uint256 requestId = withdrawQueue.requestUnstake(100 ether);
+		uint256 requestId = withdrawQueue.requestUnstake(100 ether, 0);
 		vm.stopPrank();
 
 		// Grant STAKER_ROLE to WithdrawQueue and withdraw for staking
@@ -225,7 +225,7 @@ contract WithdrawQueueGasTests is BaseTest {
 
 		uint256[] memory requestIds = new uint256[](10);
 		for (uint i = 0; i < 10; i++) {
-			requestIds[i] = withdrawQueue.requestUnstake(50 ether);
+			requestIds[i] = withdrawQueue.requestUnstake(50 ether, 0);
 		}
 		vm.stopPrank();
 
@@ -255,7 +255,7 @@ contract WithdrawQueueGasTests is BaseTest {
 		vm.startPrank(alice);
 		ggAVAX.depositAVAX{value: 1000 ether}();
 		ggAVAX.approve(address(withdrawQueue), type(uint256).max);
-		uint256 requestId = withdrawQueue.requestUnstake(100 ether);
+		uint256 requestId = withdrawQueue.requestUnstake(100 ether, 0);
 		vm.stopPrank();
 
 		// Simulate exchange rate increase by depositing yield

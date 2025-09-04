@@ -55,7 +55,7 @@ contract UpgradeTokenggAVAX is Script, EnvironmentConfig {
 		console2.log("\n=== DEPLOYING WITHDRAW QUEUE CONTRACT ===");
 
 		uint48 unstakeDelay = uint48(vm.envUint("UNSTAKE_DELAY"));
-		uint48 expirationDelay = uint48(vm.envUint("EXPIRATION_DELAY"));
+		uint48 maxExpirationDelay = uint48(vm.envUint("MAX_EXPIRATION_DELAY"));
 		address depositor = vm.envAddress("DEPOSITOR_ROLE_RECIPIENT");
 
 		ProxyAdmin withdrawQueueProxyAdmin = new ProxyAdmin();
@@ -67,7 +67,7 @@ contract UpgradeTokenggAVAX is Script, EnvironmentConfig {
 		TransparentUpgradeableProxy withdrawQueueProxy = new TransparentUpgradeableProxy(
 			address(withdrawQueueImpl),
 			address(withdrawQueueProxyAdmin),
-			abi.encodeWithSelector(withdrawQueueImpl.initialize.selector, getAddress("TokenggAVAX"), getAddress("Storage"), unstakeDelay, expirationDelay)
+			abi.encodeWithSelector(withdrawQueueImpl.initialize.selector, getAddress("TokenggAVAX"), getAddress("Storage"), unstakeDelay, maxExpirationDelay)
 		);
 		console2.log("WithdrawQueue proxy deployed at", address(withdrawQueueProxy));
 		console2.log("Default admin (deployer):", deployer);
@@ -240,10 +240,10 @@ contract UpgradeTokenggAVAX is Script, EnvironmentConfig {
 
 		// Verify delays are set correctly
 		uint48 expectedUnstakeDelay = uint48(vm.envUint("UNSTAKE_DELAY"));
-		uint48 expectedExpirationDelay = uint48(vm.envUint("EXPIRATION_DELAY"));
+		uint48 expectedMaxExpirationDelay = uint48(vm.envUint("MAX_EXPIRATION_DELAY"));
 
 		require(withdrawQueue.unstakeDelay() == expectedUnstakeDelay, "Unstake delay mismatch");
-		require(withdrawQueue.expirationDelay() == expectedExpirationDelay, "Expiration delay mismatch");
+		require(withdrawQueue.maxExpirationDelay() == expectedMaxExpirationDelay, "Max expiration delay mismatch");
 		console2.log("._/ WithdrawQueue delays set correctly");
 
 		// Verify max pending requests limit

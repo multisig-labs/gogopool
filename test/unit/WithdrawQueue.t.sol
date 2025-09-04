@@ -15,7 +15,9 @@ contract WithdrawQueueTest is BaseTest {
 	address private charlie;
 
 	uint48 private constant UNSTAKE_DELAY = 7 days;
-	uint48 private constant EXPIRATION_DELAY = 14 days;
+	uint48 private constant EXPIRATION_DELAY = 7 days;
+	uint48 private constant MIN_EXPIRATION_DELAY = 3 days;
+	uint48 private constant MAX_EXPIRATION_DELAY = 60 days;
 
 	event ExpiredFundsReclaimed(uint256 indexed requestId, uint256 amount);
 	event ExpiredSharesReturned(uint256 indexed requestId, address indexed requester, uint256 shares);
@@ -39,7 +41,7 @@ contract WithdrawQueueTest is BaseTest {
 			address(ggAVAX),
 			address(store),
 			UNSTAKE_DELAY,
-			EXPIRATION_DELAY
+			MAX_EXPIRATION_DELAY
 		);
 
 		TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(withdrawQueueImpl), address(proxyAdmin), initData);
@@ -65,7 +67,7 @@ contract WithdrawQueueTest is BaseTest {
 	function testInitialization() public {
 		assertEq(address(withdrawQueue.tokenggAVAX()), address(ggAVAX));
 		assertEq(withdrawQueue.unstakeDelay(), UNSTAKE_DELAY);
-		assertEq(withdrawQueue.expirationDelay(), EXPIRATION_DELAY);
+		assertEq(withdrawQueue.maxExpirationDelay(), MAX_EXPIRATION_DELAY);
 		assertEq(withdrawQueue.nextRequestId(), 0);
 		assertEq(withdrawQueue.getMaxRequestsPerStakingDeposit(), 25);
 	}
@@ -103,18 +105,18 @@ contract WithdrawQueueTest is BaseTest {
 
 	function testSetExpirationDelay() public {
 		// Test initial value
-		assertEq(withdrawQueue.expirationDelay(), EXPIRATION_DELAY);
+		assertEq(withdrawQueue.maxExpirationDelay(), MAX_EXPIRATION_DELAY);
 
 		// Test setter (only admin can set)
 		uint48 newDelay = 21 days;
 		vm.prank(guardian);
-		withdrawQueue.setExpirationDelay(newDelay);
-		assertEq(withdrawQueue.expirationDelay(), newDelay);
+		withdrawQueue.setMaxExpirationDelay(newDelay);
+		assertEq(withdrawQueue.maxExpirationDelay(), newDelay);
 
 		// Test that non-admin cannot set
 		vm.prank(alice);
 		vm.expectRevert();
-		withdrawQueue.setExpirationDelay(7 days);
+		withdrawQueue.setMaxExpirationDelay(7 days);
 	}
 
 	function testInitializationEvent() public {
@@ -125,12 +127,12 @@ contract WithdrawQueueTest is BaseTest {
 			address(ggAVAX),
 			address(store),
 			UNSTAKE_DELAY,
-			EXPIRATION_DELAY
+			MAX_EXPIRATION_DELAY
 		);
 
 		// Expect the ContractInitialized event
 		vm.expectEmit(true, false, false, true);
-		emit ContractInitialized(address(ggAVAX), UNSTAKE_DELAY, EXPIRATION_DELAY);
+		emit ContractInitialized(address(ggAVAX), UNSTAKE_DELAY, MAX_EXPIRATION_DELAY);
 
 		TransparentUpgradeableProxy newProxy = new TransparentUpgradeableProxy(address(newWithdrawQueueImpl), address(proxyAdmin), initData);
 		WithdrawQueue newWithdrawQueue = WithdrawQueue(payable(address(newProxy)));
@@ -138,7 +140,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Verify initialization
 		assertEq(address(newWithdrawQueue.tokenggAVAX()), address(ggAVAX));
 		assertEq(newWithdrawQueue.unstakeDelay(), UNSTAKE_DELAY);
-		assertEq(newWithdrawQueue.expirationDelay(), EXPIRATION_DELAY);
+		assertEq(newWithdrawQueue.maxExpirationDelay(), MAX_EXPIRATION_DELAY);
 	}
 
 	function testRequestUnstakeBasic() public {
@@ -151,7 +153,7 @@ contract WithdrawQueueTest is BaseTest {
 
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		WithdrawQueue.UnstakeRequest memory request = withdrawQueue.getRequestInfo(requestId);
@@ -161,7 +163,7 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(request.shares, sharesToUnstake);
 		assertEq(request.requestTime, block.timestamp);
 		assertEq(request.claimableTime, block.timestamp + UNSTAKE_DELAY);
-		assertEq(request.expirationTime, block.timestamp + UNSTAKE_DELAY + EXPIRATION_DELAY);
+		assertEq(request.expirationTime, block.timestamp + UNSTAKE_DELAY + MIN_EXPIRATION_DELAY);
 
 		// Request should be pending and not fulfilled
 		assertEq(withdrawQueue.isRequestPending(requestId), true);
@@ -188,7 +190,7 @@ contract WithdrawQueueTest is BaseTest {
 	function testRequestUnstakeZeroShares() public {
 		vm.startPrank(alice);
 		vm.expectRevert(WithdrawQueue.ZeroShares.selector);
-		withdrawQueue.requestUnstake(0);
+		withdrawQueue.requestUnstake(0, 0);
 		vm.stopPrank();
 	}
 
@@ -202,7 +204,7 @@ contract WithdrawQueueTest is BaseTest {
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
 		vm.expectRevert(WithdrawQueue.InsufficientTokenBalance.selector);
-		withdrawQueue.requestUnstake(sharesToUnstake);
+		withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 	}
 
@@ -217,8 +219,8 @@ contract WithdrawQueueTest is BaseTest {
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), shares1 + shares2);
 
-		uint256 requestId1 = withdrawQueue.requestUnstake(shares1);
-		uint256 requestId2 = withdrawQueue.requestUnstake(shares2);
+		uint256 requestId1 = withdrawQueue.requestUnstake(shares1, 0);
+		uint256 requestId2 = withdrawQueue.requestUnstake(shares2, 0);
 		vm.stopPrank();
 
 		assertEq(requestId1, 0);
@@ -258,7 +260,7 @@ contract WithdrawQueueTest is BaseTest {
 		uint256 sharesToUnstake = 500 ether;
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Deposit yield that's less than needed
@@ -298,7 +300,7 @@ contract WithdrawQueueTest is BaseTest {
 
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Verify it's queued
@@ -347,12 +349,12 @@ contract WithdrawQueueTest is BaseTest {
 
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), shares1);
-		uint256 requestId1 = withdrawQueue.requestUnstake(shares1);
+		uint256 requestId1 = withdrawQueue.requestUnstake(shares1, 0);
 		vm.stopPrank();
 
 		vm.startPrank(bob);
 		ggAVAX.approve(address(withdrawQueue), shares2);
-		uint256 requestId2 = withdrawQueue.requestUnstake(shares2);
+		uint256 requestId2 = withdrawQueue.requestUnstake(shares2, 0);
 		vm.stopPrank();
 
 		// Both should be queued
@@ -395,12 +397,12 @@ contract WithdrawQueueTest is BaseTest {
 
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), shares1);
-		uint256 requestId1 = withdrawQueue.requestUnstake(shares1);
+		uint256 requestId1 = withdrawQueue.requestUnstake(shares1, 0);
 		vm.stopPrank();
 
 		vm.startPrank(bob);
 		ggAVAX.approve(address(withdrawQueue), shares2);
-		uint256 requestId2 = withdrawQueue.requestUnstake(shares2);
+		uint256 requestId2 = withdrawQueue.requestUnstake(shares2, 0);
 		vm.stopPrank();
 
 		// Both should be queued
@@ -434,7 +436,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create and fulfill request with yield
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Fulfill with yield
@@ -476,7 +478,7 @@ contract WithdrawQueueTest is BaseTest {
 
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Should not be claimable before fulfillment
@@ -509,7 +511,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create and fulfill request with yield
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Fulfill with yield
@@ -524,7 +526,7 @@ contract WithdrawQueueTest is BaseTest {
 		assertGt(allocatedAmount, 0);
 
 		// Fast forward past expiration time
-		vm.warp(block.timestamp + UNSTAKE_DELAY + EXPIRATION_DELAY + 1);
+		vm.warp(block.timestamp + UNSTAKE_DELAY + MAX_EXPIRATION_DELAY + 1);
 
 		// Check that there's 1 expired request
 		assertEq(withdrawQueue.getExpiredRequestsCount(), 1);
@@ -569,12 +571,12 @@ contract WithdrawQueueTest is BaseTest {
 
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), shares1);
-		uint256 requestId1 = withdrawQueue.requestUnstake(shares1);
+		uint256 requestId1 = withdrawQueue.requestUnstake(shares1, 0);
 		vm.stopPrank();
 
 		vm.startPrank(bob);
 		ggAVAX.approve(address(withdrawQueue), shares2);
-		uint256 requestId2 = withdrawQueue.requestUnstake(shares2);
+		uint256 requestId2 = withdrawQueue.requestUnstake(shares2, 0);
 		vm.stopPrank();
 
 		// Fulfill both with MEV
@@ -588,7 +590,7 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(withdrawQueue.isFulfilledRequest(requestId2), true);
 
 		// Fast forward past expiration time
-		vm.warp(block.timestamp + UNSTAKE_DELAY + EXPIRATION_DELAY + 1);
+		vm.warp(block.timestamp + UNSTAKE_DELAY + MAX_EXPIRATION_DELAY + 1);
 
 		// Check that there are 2 expired requests
 		assertEq(withdrawQueue.getExpiredRequestsCount(), 2);
@@ -632,7 +634,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create and fulfill request with yield
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Fulfill with yield
@@ -642,7 +644,7 @@ contract WithdrawQueueTest is BaseTest {
 		withdrawQueue.depositFromStaking{value: yieldAmount}(0, yieldAmount, bytes32("TEST_YIELD"));
 
 		// Fast forward past expiration time
-		vm.warp(block.timestamp + UNSTAKE_DELAY + EXPIRATION_DELAY + 1);
+		vm.warp(block.timestamp + UNSTAKE_DELAY + MAX_EXPIRATION_DELAY + 1);
 
 		// Get expected values
 		uint256 expectedAmount = withdrawQueue.getRequestInfo(requestId).allocatedFunds;
@@ -686,12 +688,12 @@ contract WithdrawQueueTest is BaseTest {
 		// Create requests - one will be fulfilled, one will stay pending
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), shares1);
-		uint256 requestId1 = withdrawQueue.requestUnstake(shares1);
+		uint256 requestId1 = withdrawQueue.requestUnstake(shares1, 0);
 		vm.stopPrank();
 
 		vm.startPrank(bob);
 		ggAVAX.approve(address(withdrawQueue), shares2);
-		uint256 requestId2 = withdrawQueue.requestUnstake(shares2);
+		uint256 requestId2 = withdrawQueue.requestUnstake(shares2, 0);
 		vm.stopPrank();
 
 		// Both users have their shares deducted
@@ -726,7 +728,7 @@ contract WithdrawQueueTest is BaseTest {
 		// --- END exchange rate increase ---
 
 		// Fast forward past expiration time
-		vm.warp(block.timestamp + UNSTAKE_DELAY + EXPIRATION_DELAY + 1);
+		vm.warp(block.timestamp + UNSTAKE_DELAY + MAX_EXPIRATION_DELAY + 1);
 
 		// Should be 2 expired requests (1 fulfilled, 1 pending)
 		assertEq(withdrawQueue.getExpiredRequestsCount(), 2);
@@ -773,7 +775,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create and fulfill request with yield
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Fulfill with yield
@@ -818,12 +820,12 @@ contract WithdrawQueueTest is BaseTest {
 		// Create requests - one will be fulfilled, one will stay pending
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), shares1);
-		uint256 requestId1 = withdrawQueue.requestUnstake(shares1);
+		uint256 requestId1 = withdrawQueue.requestUnstake(shares1, 0);
 		vm.stopPrank();
 
 		vm.startPrank(bob);
 		ggAVAX.approve(address(withdrawQueue), shares2);
-		uint256 requestId2 = withdrawQueue.requestUnstake(shares2);
+		uint256 requestId2 = withdrawQueue.requestUnstake(shares2, 0);
 		vm.stopPrank();
 
 		// Fulfill only one request with yield
@@ -840,7 +842,7 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(withdrawQueue.getExpiredRequestsCount(), 0);
 
 		// Fast forward past expiration time
-		vm.warp(block.timestamp + UNSTAKE_DELAY + EXPIRATION_DELAY + 1);
+		vm.warp(block.timestamp + UNSTAKE_DELAY + MAX_EXPIRATION_DELAY + 1);
 
 		// Should count both expired requests (1 fulfilled, 1 pending)
 		assertEq(withdrawQueue.getExpiredRequestsCount(), 2);
@@ -874,7 +876,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create request that won't be fulfilled
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Simulate exchange rate improvement (more assets per share)
@@ -882,7 +884,7 @@ contract WithdrawQueueTest is BaseTest {
 		vm.deal(address(ggAVAX), address(ggAVAX).balance + 200 ether);
 
 		// Fast forward past expiration time
-		vm.warp(block.timestamp + UNSTAKE_DELAY + EXPIRATION_DELAY + 1);
+		vm.warp(block.timestamp + UNSTAKE_DELAY + MAX_EXPIRATION_DELAY + 1);
 
 		// Get expected values
 		uint256 expectedAssets = withdrawQueue.getRequestInfo(requestId).expectedAssets;
@@ -916,11 +918,11 @@ contract WithdrawQueueTest is BaseTest {
 		// Create request that won't be fulfilled
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Fast forward past expiration time
-		vm.warp(block.timestamp + UNSTAKE_DELAY + EXPIRATION_DELAY + 1);
+		vm.warp(block.timestamp + UNSTAKE_DELAY + MAX_EXPIRATION_DELAY + 1);
 
 		// Get expected values
 		uint256 expectedAssets = withdrawQueue.getRequestInfo(requestId).expectedAssets;
@@ -948,7 +950,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create and immediately claim request
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Fulfill with yield
@@ -965,7 +967,7 @@ contract WithdrawQueueTest is BaseTest {
 		withdrawQueue.claimUnstake(requestId);
 
 		// Fast forward past expiration time
-		vm.warp(block.timestamp + EXPIRATION_DELAY + 1);
+		vm.warp(block.timestamp + MAX_EXPIRATION_DELAY + 1);
 
 		// Should revert when trying to reclaim already claimed request
 		vm.expectRevert(WithdrawQueue.RequestNotFulfilledOrPending.selector);
@@ -983,7 +985,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create and fulfill request with yield
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Fulfill with yield
@@ -993,7 +995,7 @@ contract WithdrawQueueTest is BaseTest {
 		withdrawQueue.depositFromStaking{value: yieldAmount}(0, yieldAmount, bytes32("TEST_YIELD"));
 
 		// Fast forward past expiration time
-		vm.warp(block.timestamp + UNSTAKE_DELAY + EXPIRATION_DELAY + 1);
+		vm.warp(block.timestamp + UNSTAKE_DELAY + MAX_EXPIRATION_DELAY + 1);
 
 		// Reclaim expired funds
 		withdrawQueue.reclaimExpiredFunds(10);
@@ -1016,7 +1018,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create and fulfill request with yield
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Fulfill with yield
@@ -1026,7 +1028,7 @@ contract WithdrawQueueTest is BaseTest {
 		withdrawQueue.depositFromStaking{value: yieldAmount}(0, yieldAmount, bytes32("TEST_YIELD"));
 
 		// Fast forward past expiration time but don't reclaim yet
-		vm.warp(block.timestamp + UNSTAKE_DELAY + EXPIRATION_DELAY + 1);
+		vm.warp(block.timestamp + UNSTAKE_DELAY + MAX_EXPIRATION_DELAY + 1);
 
 		// User should not be able to claim expired request
 		vm.startPrank(alice);
@@ -1057,7 +1059,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create first request
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), 100 ether);
-		uint256 requestId1 = withdrawQueue.requestUnstake(100 ether);
+		uint256 requestId1 = withdrawQueue.requestUnstake(100 ether, 0);
 		vm.stopPrank();
 
 		// Should have 1 pending request
@@ -1071,7 +1073,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create second request
 		vm.startPrank(bob);
 		ggAVAX.approve(address(withdrawQueue), 150 ether);
-		uint256 requestId2 = withdrawQueue.requestUnstake(150 ether);
+		uint256 requestId2 = withdrawQueue.requestUnstake(150 ether, 0);
 		vm.stopPrank();
 
 		// Should have 2 pending requests
@@ -1121,7 +1123,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create request - should be in pending set
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), 100 ether);
-		uint256 requestId = withdrawQueue.requestUnstake(100 ether);
+		uint256 requestId = withdrawQueue.requestUnstake(100 ether, 0);
 		vm.stopPrank();
 
 		// Verify initial state: pending set has request, fulfilled set is empty
@@ -1183,7 +1185,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create request
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Verify request is pending
@@ -1235,7 +1237,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create request - expectedAssets will be calculated at current (improved) rate
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Get the expectedAssets from the request (calculated at request time)
@@ -1271,7 +1273,7 @@ contract WithdrawQueueTest is BaseTest {
 		vm.startPrank(alice);
 		ggAVAX.depositAVAX{value: 1000 ether}();
 		ggAVAX.approve(address(withdrawQueue), 100 ether);
-		uint256 requestId = withdrawQueue.requestUnstake(100 ether);
+		uint256 requestId = withdrawQueue.requestUnstake(100 ether, 0);
 		vm.stopPrank();
 
 		vm.startPrank(bob);
@@ -1299,7 +1301,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create request
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Fulfill the request
@@ -1356,7 +1358,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create request
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Fulfill the request
@@ -1389,7 +1391,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Create and fulfill request with yield
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Fulfill with yield
@@ -1427,14 +1429,14 @@ contract WithdrawQueueTest is BaseTest {
 		// Create request that won't be fulfilled
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), sharesToUnstake);
-		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake);
+		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
 		// Verify request is still pending
 		assertEq(withdrawQueue.isRequestPending(requestId), true);
 
 		// Fast forward past expiration time
-		vm.warp(block.timestamp + UNSTAKE_DELAY + EXPIRATION_DELAY + 1);
+		vm.warp(block.timestamp + UNSTAKE_DELAY + MAX_EXPIRATION_DELAY + 1);
 
 		// Get alice's balance before reclaim
 		uint256 aliceSharesBefore = ggAVAX.balanceOf(alice);
@@ -1479,7 +1481,7 @@ contract WithdrawQueueTest is BaseTest {
 		uint256 shares1 = 500 ether;
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), shares1);
-		uint256 requestId1 = withdrawQueue.requestUnstake(shares1);
+		uint256 requestId1 = withdrawQueue.requestUnstake(shares1, 0);
 		vm.stopPrank();
 
 		// Add some yield to the queue
@@ -1502,7 +1504,7 @@ contract WithdrawQueueTest is BaseTest {
 		uint256 shares2 = 1000 ether;
 		vm.startPrank(bob);
 		ggAVAX.approve(address(withdrawQueue), shares2);
-		uint256 requestId2 = withdrawQueue.requestUnstake(shares2);
+		uint256 requestId2 = withdrawQueue.requestUnstake(shares2, 0);
 		vm.stopPrank();
 
 		// This request should remain pending because:
@@ -1534,8 +1536,8 @@ contract WithdrawQueueTest is BaseTest {
 
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), shares1 + shares2);
-		uint256 requestId1 = withdrawQueue.requestUnstake(shares1);
-		uint256 requestId2 = withdrawQueue.requestUnstake(shares2);
+		uint256 requestId1 = withdrawQueue.requestUnstake(shares1, 0);
+		uint256 requestId2 = withdrawQueue.requestUnstake(shares2, 0);
 		vm.stopPrank();
 
 		// Both should be pending
@@ -1580,7 +1582,7 @@ contract WithdrawQueueTest is BaseTest {
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), 700 ether);
 		for (uint i = 0; i < 4; i++) {
-			requestIds[i] = withdrawQueue.requestUnstake(shares[i]);
+			requestIds[i] = withdrawQueue.requestUnstake(shares[i], 0);
 		}
 		vm.stopPrank();
 
@@ -1655,7 +1657,7 @@ contract WithdrawQueueTest is BaseTest {
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), 500 ether);
 		for (uint i = 0; i < 5; i++) {
-			requestIds[i] = withdrawQueue.requestUnstake(100 ether);
+			requestIds[i] = withdrawQueue.requestUnstake(100 ether, 0);
 		}
 		vm.stopPrank();
 
@@ -1681,7 +1683,7 @@ contract WithdrawQueueTest is BaseTest {
 		vm.startPrank(alice);
 		ggAVAX.depositAVAX{value: 1000 ether}();
 		ggAVAX.approve(address(withdrawQueue), 100 ether);
-		uint256 requestId = withdrawQueue.requestUnstake(100 ether);
+		uint256 requestId = withdrawQueue.requestUnstake(100 ether, 0);
 		vm.stopPrank();
 
 		// Fulfill request
@@ -1705,7 +1707,7 @@ contract WithdrawQueueTest is BaseTest {
 		vm.startPrank(alice);
 		ggAVAX.depositAVAX{value: 1000 ether}();
 		ggAVAX.approve(address(withdrawQueue), 100 ether);
-		uint256 requestId = withdrawQueue.requestUnstake(100 ether);
+		uint256 requestId = withdrawQueue.requestUnstake(100 ether, 0);
 		vm.stopPrank();
 
 		// Fulfill request
@@ -1730,7 +1732,7 @@ contract WithdrawQueueTest is BaseTest {
 		vm.startPrank(alice);
 		ggAVAX.depositAVAX{value: 1000 ether}();
 		ggAVAX.approve(address(withdrawQueue), 100 ether);
-		uint256 requestId = withdrawQueue.requestUnstake(100 ether);
+		uint256 requestId = withdrawQueue.requestUnstake(100 ether, 0);
 		vm.stopPrank();
 
 		// Fulfill request
@@ -1775,12 +1777,12 @@ contract WithdrawQueueTest is BaseTest {
 		// Create requests
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), 100 ether);
-		uint256 requestId1 = withdrawQueue.requestUnstake(100 ether);
+		uint256 requestId1 = withdrawQueue.requestUnstake(100 ether, 0);
 		vm.stopPrank();
 
 		vm.startPrank(bob);
 		ggAVAX.approve(address(withdrawQueue), 100 ether);
-		uint256 requestId2 = withdrawQueue.requestUnstake(100 ether);
+		uint256 requestId2 = withdrawQueue.requestUnstake(100 ether, 0);
 		vm.stopPrank();
 
 		skip(2 days);
@@ -1813,9 +1815,9 @@ contract WithdrawQueueTest is BaseTest {
 		uint256[] memory requestIds = new uint256[](3);
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), 300 ether);
-		requestIds[0] = withdrawQueue.requestUnstake(100 ether);
-		requestIds[1] = withdrawQueue.requestUnstake(100 ether);
-		requestIds[2] = withdrawQueue.requestUnstake(100 ether);
+		requestIds[0] = withdrawQueue.requestUnstake(100 ether, 0);
+		requestIds[1] = withdrawQueue.requestUnstake(100 ether, 0);
+		requestIds[2] = withdrawQueue.requestUnstake(100 ether, 0);
 		vm.stopPrank();
 
 		// Drain ALL liquidity by withdrawing for delegation
@@ -1860,7 +1862,7 @@ contract WithdrawQueueTest is BaseTest {
 			address(maliciousGGAVAX),
 			address(store),
 			UNSTAKE_DELAY,
-			EXPIRATION_DELAY
+			MAX_EXPIRATION_DELAY
 		);
 
 		TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(withdrawQueueImpl), address(proxyAdmin), initData);
@@ -1878,7 +1880,7 @@ contract WithdrawQueueTest is BaseTest {
 		maliciousGGAVAX.approve(address(maliciousQueue), type(uint256).max);
 
 		// Create an unstake request
-		uint256 requestId = maliciousQueue.requestUnstake(500 ether);
+		uint256 requestId = maliciousQueue.requestUnstake(500 ether, 0);
 
 		// Send AVAX to the queue to fulfill the request
 		vm.stopPrank();
@@ -1909,7 +1911,7 @@ contract WithdrawQueueTest is BaseTest {
 
 		// Create 15 requests of 100 ether each
 		for (uint i = 0; i < 15; i++) {
-			withdrawQueue.requestUnstake(100 ether);
+			withdrawQueue.requestUnstake(100 ether, 0);
 		}
 		vm.stopPrank();
 
@@ -1947,7 +1949,7 @@ contract WithdrawQueueTest is BaseTest {
 
 		// Create 30 requests of 100 ether each
 		for (uint i = 0; i < 30; i++) {
-			withdrawQueue.requestUnstake(100 ether);
+			withdrawQueue.requestUnstake(100 ether, 0);
 		}
 		vm.stopPrank();
 
@@ -2011,7 +2013,7 @@ contract WithdrawQueueTest is BaseTest {
 		uint256 unstakeAmount = 20 ether;
 		vm.startPrank(alice);
 		ggAVAX.approve(address(withdrawQueue), unstakeAmount);
-		uint256 requestId = withdrawQueue.requestUnstake(unstakeAmount);
+		uint256 requestId = withdrawQueue.requestUnstake(unstakeAmount, 0);
 		vm.stopPrank();
 
 		// Give contract existing balance and reduce ggAVAX liquidity
@@ -2045,7 +2047,7 @@ contract WithdrawQueueTest is BaseTest {
 		ggAVAX.approve(address(withdrawQueue), type(uint256).max);
 
 		vm.prank(alice);
-		uint256 requestId = withdrawQueue.requestUnstake(20 ether);
+		uint256 requestId = withdrawQueue.requestUnstake(20 ether, 0);
 
 		// Reduce ggAVAX liquidity to force deposit to ggAVAX
 		// Will result in 10 AVAX in ggAVAX. Need 10 AVAX to cover request
@@ -2097,7 +2099,7 @@ contract WithdrawQueueTest is BaseTest {
 		for (uint256 i = 0; i < 10; i++) {
 			uint256 shares = (i + 1) * 10 ether; // 10, 20, 30, ..., 100 ether
 			ggAVAX.approve(address(withdrawQueue), shares);
-			expectedRequestIds[i] = withdrawQueue.requestUnstake(shares);
+			expectedRequestIds[i] = withdrawQueue.requestUnstake(shares, 0);
 		}
 		vm.stopPrank();
 
@@ -2210,7 +2212,7 @@ contract WithdrawQueueTest is BaseTest {
 		for (uint256 i = 0; i < 3; i++) {
 			uint256 shares = 5 ether;
 			ggAVAX.approve(address(withdrawQueue), shares);
-			withdrawQueue.requestUnstake(shares);
+			withdrawQueue.requestUnstake(shares, 0);
 		}
 		vm.stopPrank();
 
@@ -2258,7 +2260,7 @@ contract WithdrawQueueTest is BaseTest {
 
 		// Bob should revert when trying to unstake less than minimum
 		vm.expectRevert(WithdrawQueue.MinimumSharesNotMet.selector);
-		withdrawQueue.requestUnstakeOnBehalfOf(tooSmallAmount, alice);
+		withdrawQueue.requestUnstakeOnBehalfOf(tooSmallAmount, alice, UNSTAKE_DELAY);
 
 		vm.stopPrank();
 	}
@@ -2281,7 +2283,7 @@ contract WithdrawQueueTest is BaseTest {
 		ggAVAX.approve(address(withdrawQueue), validAmount);
 
 		vm.startPrank(bob);
-		uint256 requestId = withdrawQueue.requestUnstakeOnBehalfOf(validAmount, alice);
+		uint256 requestId = withdrawQueue.requestUnstakeOnBehalfOf(validAmount, alice, 0);
 		vm.stopPrank();
 
 		// Verify the request was created successfully
@@ -2290,7 +2292,7 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(request.shares, validAmount);
 		assertEq(request.requestTime, block.timestamp);
 		assertEq(request.claimableTime, block.timestamp + UNSTAKE_DELAY);
-		assertEq(request.expirationTime, block.timestamp + UNSTAKE_DELAY + EXPIRATION_DELAY);
+		assertEq(request.expirationTime, block.timestamp + UNSTAKE_DELAY + MIN_EXPIRATION_DELAY);
 
 		// Verify shares were transferred from bob to withdraw queue
 		assertEq(ggAVAX.balanceOf(bob), bobSharesBefore - validAmount);
@@ -2316,7 +2318,7 @@ contract WithdrawQueueTest is BaseTest {
 		ggAVAX.approve(address(withdrawQueue), exactMinAmount);
 
 		vm.startPrank(bob);
-		uint256 requestId = withdrawQueue.requestUnstakeOnBehalfOf(exactMinAmount, alice);
+		uint256 requestId = withdrawQueue.requestUnstakeOnBehalfOf(exactMinAmount, alice, UNSTAKE_DELAY);
 		vm.stopPrank();
 
 		// Should succeed with exact minimum amount
@@ -2337,7 +2339,7 @@ contract WithdrawQueueTest is BaseTest {
 		vm.prank(alice);
 		ggAVAX.approve(address(withdrawQueue), 100 ether);
 		vm.prank(alice);
-		uint256 requestId1 = withdrawQueue.requestUnstake(100 ether);
+		uint256 requestId1 = withdrawQueue.requestUnstake(100 ether, 0);
 
 		// Improve exchange rate by adding rewards
 		vm.prank(address(minipoolMgr));
@@ -2357,7 +2359,7 @@ contract WithdrawQueueTest is BaseTest {
 		vm.prank(alice);
 		ggAVAX.approve(address(withdrawQueue), 1500 ether);
 		vm.prank(alice);
-		uint256 requestId2 = withdrawQueue.requestUnstake(1500 ether);
+		uint256 requestId2 = withdrawQueue.requestUnstake(1500 ether, 0);
 
 		// Reduce ggAVAX liquidity to force early return on second request
 		vm.startPrank(address(minipoolMgr));

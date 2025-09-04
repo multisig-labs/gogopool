@@ -35,6 +35,8 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 	bytes32 public constant DEPOSITOR_ROLE = keccak256("DEPOSITOR_ROLE");
 
+	uint48 public constant MIN_EXPIRATION_DELAY = 3 days;
+
 	uint256 public nextRequestId;
 	uint256 public totalAllocatedFunds;
 
@@ -47,7 +49,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	mapping(address => EnumerableSet.UintSet) private requestsByOwner;
 
 	uint48 public unstakeDelay;
-	uint48 public expirationDelay;
+	uint48 public maxExpirationDelay;
 	TokenggAVAX public tokenggAVAX;
 	Storage public store;
 
@@ -85,6 +87,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	error InvalidRedemptionAmount();
 	error InvalidYieldAmounts();
 	error MinimumSharesNotMet();
+	error InvalidExpirationDelay();
 
 	/// @custom:oz-upgrades-unsafe-allow constructor
 	constructor() {
@@ -93,22 +96,24 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 	/// @notice Initialize the WithdrawQueue contract with required parameters
 	/// @param tokenggAVAXAddress The address of the stAVAX token contract
-	/// @param _unstakeDelay How long users must wait before they can claim their AVAX
-	/// @param _expirationDelay How long after claiming period before requests expire
-	function initialize(address payable tokenggAVAXAddress, address storageAddress, uint48 _unstakeDelay, uint48 _expirationDelay) public initializer {
+	/// @param storageAddress The address of the storage contract
+	/// @param _unstakeDelay How long (seconds) users must wait before they can claim their AVAX
+	/// @param _maxExpirationDelay How long (seconds) after claiming period before requests expire
+	function initialize(address payable tokenggAVAXAddress, address storageAddress, uint48 _unstakeDelay, uint48 _maxExpirationDelay) public initializer {
 		__ReentrancyGuard_init();
 		__AccessControl_init();
 		_grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
 
 		tokenggAVAX = TokenggAVAX(payable(tokenggAVAXAddress));
 		unstakeDelay = _unstakeDelay;
-		expirationDelay = _expirationDelay;
+		maxExpirationDelay = _maxExpirationDelay;
 		store = Storage(storageAddress);
 
 		maxRequestsPerStakingDeposit = 50;
 		minUnstakeOnBehalfOfAmt = 0.01 ether;
+		maxExpirationDelay = _maxExpirationDelay;
 
-		emit ContractInitialized(tokenggAVAXAddress, _unstakeDelay, _expirationDelay);
+		emit ContractInitialized(tokenggAVAXAddress, _unstakeDelay, _maxExpirationDelay);
 	}
 
 	/// @notice Accept AVAX deposits from external sources
@@ -121,16 +126,21 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 	/// @notice Request to unstake your stAVAX tokens
 	/// @param shares How many stAVAX tokens you want to unstake
+	/// @param expirationDelay How long after claiming period before requests expire
 	/// @return requestId Your unique request ID for tracking
-	function requestUnstake(uint256 shares) external returns (uint256 requestId) {
-		return _requestUnstake(shares, msg.sender, msg.sender);
+	function requestUnstake(uint256 shares, uint48 expirationDelay) external returns (uint256 requestId) {
+		return _requestUnstake(shares, msg.sender, msg.sender, expirationDelay);
 	}
 
-	function requestUnstakeOnBehalfOf(uint256 shares, address requester) external returns (uint256 requestId) {
+	/// @notice Request to unstake stAVAX tokens on behalf of another user
+	/// @param shares How many stAVAX tokens you want to unstake
+	/// @param expirationDelay How long after claiming period before requests expire
+	/// @return requestId Your unique request ID for tracking
+	function requestUnstakeOnBehalfOf(uint256 shares, address requester, uint48 expirationDelay) external returns (uint256 requestId) {
 		if (shares < minUnstakeOnBehalfOfAmt) {
 			revert MinimumSharesNotMet();
 		}
-		return _requestUnstake(shares, msg.sender, requester);
+		return _requestUnstake(shares, msg.sender, requester, expirationDelay);
 	}
 
 	/// @notice Claim your AVAX after your unstake request is fulfilled
@@ -586,16 +596,20 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		return minUnstakeOnBehalfOfAmt;
 	}
 
-	/// @notice Set the unstake delay (admin only)
+	/// @notice Set the unstake delay(admin only)
 	/// @param newUnstakeDelay The new unstake delay in seconds
 	function setUnstakeDelay(uint48 newUnstakeDelay) external onlyRole(DEFAULT_ADMIN_ROLE) {
 		unstakeDelay = newUnstakeDelay;
 	}
 
-	/// @notice Set the expiration delay (admin only)
-	/// @param newExpirationDelay The new expiration delay in seconds
-	function setExpirationDelay(uint48 newExpirationDelay) external onlyRole(DEFAULT_ADMIN_ROLE) {
-		expirationDelay = newExpirationDelay;
+	/// @notice Set the max expiration delay (admin only)
+	/// @param newMaxExpirationDelay The new expiration delay in seconds
+	function setMaxExpirationDelay(uint48 newMaxExpirationDelay) external onlyRole(DEFAULT_ADMIN_ROLE) {
+		if (newMaxExpirationDelay < MIN_EXPIRATION_DELAY) {
+			revert InvalidExpirationDelay();
+		}
+
+		maxExpirationDelay = newMaxExpirationDelay;
 	}
 
 	/// @notice Get detailed information about an unstake request
@@ -749,10 +763,19 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	/// @param shares The number of shares to unstake
 	/// @param shareProvider The address that provides the shares (caller)
 	/// @param requester The address that will own the request and receive the funds
+	/// @param expirationDelay How long after claiming period before requests expire
 	/// @return requestId The unique identifier for the created request
-	function _requestUnstake(uint256 shares, address shareProvider, address requester) internal returns (uint256 requestId) {
+	function _requestUnstake(uint256 shares, address shareProvider, address requester, uint48 expirationDelay) internal returns (uint256 requestId) {
 		if (shares == 0) {
 			revert ZeroShares();
+		}
+
+		if (expirationDelay > maxExpirationDelay) {
+			revert InvalidExpirationDelay();
+		}
+
+		if (expirationDelay < MIN_EXPIRATION_DELAY) {
+			expirationDelay = MIN_EXPIRATION_DELAY;
 		}
 
 		if (tokenggAVAX.balanceOf(shareProvider) < shares) {
@@ -760,8 +783,6 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		}
 
 		uint256 expectedAssets = tokenggAVAX.convertToAssets(shares);
-
-		ERC20(address(tokenggAVAX)).safeTransferFrom(shareProvider, address(this), shares);
 
 		requestId = nextRequestId++;
 		uint48 currentTime = uint48(block.timestamp);
@@ -779,6 +800,8 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		requestsByOwner[requester].add(requestId);
 		pendingRequests.add(requestId);
 		pendingRequestsQueue.pushBack(bytes32(requestId));
+
+		ERC20(address(tokenggAVAX)).safeTransferFrom(shareProvider, address(this), shares);
 
 		emit UnstakeRequested(requestId, requester, shares, expectedAssets, currentTime + unstakeDelay);
 	}

@@ -18,7 +18,7 @@ contract WithdrawQueueInvariants is BaseTest {
 	address private charlie;
 
 	uint48 private constant UNSTAKE_DELAY = 7 days;
-	uint48 private constant EXPIRATION_DELAY = 14 days;
+	uint48 private constant MAX_EXPIRATION_DELAY = 14 days;
 
 	function setUp() public override {
 		super.setUp();
@@ -30,7 +30,7 @@ contract WithdrawQueueInvariants is BaseTest {
 		// Deploy WithdrawQueue
 		vm.startPrank(guardian);
 		WithdrawQueue withdrawQueueImpl = new WithdrawQueue();
-		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), address(store), UNSTAKE_DELAY, EXPIRATION_DELAY);
+		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), address(store), UNSTAKE_DELAY, MAX_EXPIRATION_DELAY);
 
 		TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(withdrawQueueImpl), address(proxyAdmin), initData);
 		withdrawQueue = WithdrawQueue(payable(address(proxy)));
@@ -182,7 +182,6 @@ contract WithdrawQueueInvariants is BaseTest {
 		for (uint256 i = 0; i < withdrawQueue.nextRequestId(); i++) {
 			WithdrawQueue.UnstakeRequest memory req = withdrawQueue.getRequestInfo(i);
 			if (req.requester != address(0)) {
-
 				if (req.requestTime > req.claimableTime) {
 					console2.log("INVARIANT VIOLATION: Time Progression - requestTime > claimableTime");
 					console2.log("Request ID:", i);
@@ -207,12 +206,11 @@ contract WithdrawQueueInvariants is BaseTest {
 	/// Delays are applied consistently
 	function invariant_delayConsistency() external view {
 		uint48 unstakeDelay = withdrawQueue.unstakeDelay();
-		uint48 expirationDelay = withdrawQueue.expirationDelay();
+		uint48 maxExpirationDelay = withdrawQueue.maxExpirationDelay();
 
 		for (uint256 i = 0; i < withdrawQueue.nextRequestId(); i++) {
 			WithdrawQueue.UnstakeRequest memory req = withdrawQueue.getRequestInfo(i);
 			if (req.requester != address(0)) {
-
 				if (req.claimableTime != req.requestTime + unstakeDelay) {
 					console2.log("INVARIANT VIOLATION: Delay Consistency - claimableTime incorrect");
 					console2.log("Request ID:", i);
@@ -220,15 +218,15 @@ contract WithdrawQueueInvariants is BaseTest {
 					console2.log("Actual claimableTime:", req.claimableTime);
 				}
 
-				if (req.expirationTime != req.claimableTime + expirationDelay) {
+				if (req.expirationTime != req.claimableTime + maxExpirationDelay) {
 					console2.log("INVARIANT VIOLATION: Delay Consistency - expirationTime incorrect");
 					console2.log("Request ID:", i);
-					console2.log("Expected expirationTime:", req.claimableTime + expirationDelay);
+					console2.log("Expected expirationTime:", req.claimableTime + maxExpirationDelay);
 					console2.log("Actual expirationTime:", req.expirationTime);
 				}
 
 				assert(req.claimableTime == req.requestTime + unstakeDelay);
-				assert(req.expirationTime == req.claimableTime + expirationDelay);
+				assert(req.expirationTime == req.claimableTime + maxExpirationDelay);
 			}
 		}
 	}
@@ -241,7 +239,6 @@ contract WithdrawQueueInvariants is BaseTest {
 		for (uint256 i = 0; i < withdrawQueue.nextRequestId(); i++) {
 			WithdrawQueue.UnstakeRequest memory req = withdrawQueue.getRequestInfo(i);
 			if (req.requester != address(0)) {
-
 				if (req.expectedAssets == 0) {
 					console2.log("INVARIANT VIOLATION: Expected Assets Validity - expectedAssets is zero");
 					console2.log("Request ID:", i);
@@ -297,12 +294,12 @@ contract WithdrawQueueInvariants is BaseTest {
 	function invariant_fifoProcessing() external view {
 		uint256[] memory pendingRequests = withdrawQueue.getAllPendingRequests();
 		for (uint256 i = 1; i < pendingRequests.length; i++) {
-			WithdrawQueue.UnstakeRequest memory prevReq = withdrawQueue.getRequestInfo(pendingRequests[i-1]);
+			WithdrawQueue.UnstakeRequest memory prevReq = withdrawQueue.getRequestInfo(pendingRequests[i - 1]);
 			WithdrawQueue.UnstakeRequest memory currReq = withdrawQueue.getRequestInfo(pendingRequests[i]);
 
 			if (prevReq.requestTime > currReq.requestTime) {
 				console2.log("INVARIANT VIOLATION: FIFO Processing");
-				console2.log("Previous Request ID:", pendingRequests[i-1]);
+				console2.log("Previous Request ID:", pendingRequests[i - 1]);
 				console2.log("Previous Request Time:", prevReq.requestTime);
 				console2.log("Current Request ID:", pendingRequests[i]);
 				console2.log("Current Request Time:", currReq.requestTime);

@@ -126,7 +126,10 @@ contract TokenpstAVAX is ERC20Upgradeable, OwnableUpgradeable, PausableUpgradeab
 	/// @param assets Amount of pstAVAX to redeem for ggAVAX
 	/// @return vaultShares Amount of ggAVAX shares received
 	/// @return requestId The ID of the unstake request
-	function withdrawViaQueue(uint256 assets) external nonReentrant whenNotPaused returns (uint256 vaultShares, uint256 requestId) {
+	function withdrawViaQueue(
+		uint256 assets,
+		uint48 expirationDelay
+	) external nonReentrant whenNotPaused returns (uint256 vaultShares, uint256 requestId) {
 		if (assets == 0) revert ZeroAmount();
 		if (balanceOf(msg.sender) < assets) revert InsufficientBalance();
 
@@ -136,7 +139,7 @@ contract TokenpstAVAX is ERC20Upgradeable, OwnableUpgradeable, PausableUpgradeab
 		_burn(msg.sender, assets);
 
 		IERC4626(vault).approve(withdrawQueue, vaultShares);
-		requestId = WithdrawQueue(payable(withdrawQueue)).requestUnstakeOnBehalfOf(vaultShares, msg.sender);
+		requestId = WithdrawQueue(payable(withdrawQueue)).requestUnstakeOnBehalfOf(vaultShares, msg.sender, expirationDelay);
 
 		emit WithdrawnViaQueue(msg.sender, assets, vaultShares, requestId);
 	}

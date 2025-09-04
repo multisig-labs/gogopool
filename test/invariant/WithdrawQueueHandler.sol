@@ -89,7 +89,7 @@ contract WithdrawQueueHandler {
 		uint256 shares = bound(sharesSeed, 1, userBalance);
 
 		try ggAVAX.approve(address(withdrawQueue), shares) {
-			try withdrawQueue.requestUnstake(shares) {
+			try withdrawQueue.requestUnstake(shares, 0) {
 				// Success - shares moved to withdrawQueue
 			} catch {
 				// Ignore failed requests
@@ -251,7 +251,7 @@ contract WithdrawQueueHandler {
 
 	/// @notice Test edge case: request with zero shares
 	function testZeroSharesRequest(uint256 actorSeed) external useActor(actorSeed) countCall("testZeroSharesRequest") {
-		try withdrawQueue.requestUnstake(0) {
+		try withdrawQueue.requestUnstake(0, 0) {
 			// Should revert
 		} catch {
 			// Expected
@@ -259,7 +259,10 @@ contract WithdrawQueueHandler {
 	}
 
 	/// @notice Test edge case: claim non-existent request
-	function testClaimNonExistentRequest(uint256 actorSeed, uint256 requestIdSeed) external useActor(actorSeed) countCall("testClaimNonExistentRequest") {
+	function testClaimNonExistentRequest(
+		uint256 actorSeed,
+		uint256 requestIdSeed
+	) external useActor(actorSeed) countCall("testClaimNonExistentRequest") {
 		uint256 requestId = bound(requestIdSeed, withdrawQueue.nextRequestId(), withdrawQueue.nextRequestId() + 100);
 
 		try withdrawQueue.claimUnstake(requestId) {
@@ -272,14 +275,18 @@ contract WithdrawQueueHandler {
 	// ============ UTILITY FUNCTIONS ============
 
 	/// @notice Get current system state for debugging
-	function getSystemState() external view returns (
-		uint256 ggAVAXBalance,
-		uint256 withdrawQueueBalance,
-		uint256 totalAllocated,
-		uint256 pendingCount,
-		uint256 fulfilledCount,
-		uint256 nextRequestId
-	) {
+	function getSystemState()
+		external
+		view
+		returns (
+			uint256 ggAVAXBalance,
+			uint256 withdrawQueueBalance,
+			uint256 totalAllocated,
+			uint256 pendingCount,
+			uint256 fulfilledCount,
+			uint256 nextRequestId
+		)
+	{
 		ggAVAXBalance = ggAVAX.totalAssets();
 		withdrawQueueBalance = address(withdrawQueue).balance;
 		totalAllocated = withdrawQueue.totalAllocatedFunds();
