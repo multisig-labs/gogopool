@@ -92,6 +92,8 @@ contract TokenpstAVAX is ERC20Upgradeable, OwnableUpgradeable, PausableUpgradeab
 		// Approve vault to spend WAVAX
 		IWAVAX(underlyingAsset).approve(address(vault), assets);
 
+		stripYield();
+
 		// Deposit WAVAX into vault and get shares
 		uint256 vaultShares = IERC4626(vault).deposit(assets, address(this));
 
@@ -106,6 +108,8 @@ contract TokenpstAVAX is ERC20Upgradeable, OwnableUpgradeable, PausableUpgradeab
 	function withdraw(uint256 assets) public nonReentrant whenNotPaused returns (uint256 vaultShares) {
 		if (assets == 0) revert ZeroAmount();
 		if (balanceOf(msg.sender) < assets) revert InsufficientBalance();
+
+		stripYield();
 
 		// Calculate how many vault shares this represents
 		vaultShares = IERC4626(vault).convertToShares(assets);
@@ -126,6 +130,7 @@ contract TokenpstAVAX is ERC20Upgradeable, OwnableUpgradeable, PausableUpgradeab
 		if (assets == 0) revert ZeroAmount();
 		if (balanceOf(msg.sender) < assets) revert InsufficientBalance();
 
+		stripYield();
 		vaultShares = IERC4626(vault).convertToShares(assets);
 
 		_burn(msg.sender, assets);
@@ -137,9 +142,10 @@ contract TokenpstAVAX is ERC20Upgradeable, OwnableUpgradeable, PausableUpgradeab
 	}
 
 	/// @notice Calculate how much excess vault shares the contract has, and send them to vault to increase it's yield
-	function stripYield() external nonReentrant whenNotPaused {
-		uint256 excessShares = getExcessShares();
-		if (excessShares == 0) revert NoYieldToStrip();
+	/// @return excessShares Amount of excess shares stripped, or 0 if no excess
+	function stripYield() public whenNotPaused returns (uint256 excessShares) {
+		excessShares = getExcessShares();
+		if (excessShares == 0) return 0;
 
 		// Call depositAdditionalYield on the vault to burn the shares and emit event
 		IYieldDonor(payable(vault)).donateYield(excessShares, "pstAVAX");
@@ -167,6 +173,8 @@ contract TokenpstAVAX is ERC20Upgradeable, OwnableUpgradeable, PausableUpgradeab
 		// Solving for X: X = (totalVaultShares * ggAVAXTotalAssets - totalPstTokens * ggAVAXTotalShares) / (ggAVAXTotalAssets - totalPstTokens)
 
 		if (ggAVAXTotalAssets <= totalPstTokens) return 0; // No excess if no yield
+
+		if (pstAVAXVaultShares * ggAVAXTotalAssets < totalPstTokens * ggAVAXTotalShares) return 0;
 
 		uint256 numerator = pstAVAXVaultShares * ggAVAXTotalAssets - totalPstTokens * ggAVAXTotalShares;
 		uint256 denominator = ggAVAXTotalAssets - totalPstTokens;

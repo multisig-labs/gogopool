@@ -3,6 +3,7 @@ pragma solidity 0.8.17;
 
 import {IWAVAX} from "../interface/IWAVAX.sol";
 import {TokenggAVAX} from "./tokens/TokenggAVAX.sol";
+import {Storage} from "./Storage.sol";
 
 import {ERC20} from "@rari-capital/solmate/src/tokens/ERC20.sol";
 
@@ -48,8 +49,10 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	uint48 public unstakeDelay;
 	uint48 public expirationDelay;
 	TokenggAVAX public tokenggAVAX;
+	Storage public store;
 
-	uint256 private maxPendingRequestsLimit;
+	uint256 private maxRequestsPerStakingDeposit;
+	uint256 private minUnstakeOnBehalfOfAmt;
 
 	event UnstakeRequested(uint256 indexed requestId, address indexed requester, uint256 shares, uint256 expectedAssets, uint48 claimableTime);
 	event RequestFulfilled(bytes32 indexed source, uint256 indexed requestId, uint256 assets);
@@ -62,6 +65,8 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	event BatchExpiredFundsReclaimed(address indexed requester, uint256 totalAmount, uint256 requestsProcessed);
 	event QueueCleaned(bytes32 indexed reason, uint256 indexed requestId);
 	event ContractInitialized(address indexed tokenggAVAX, uint48 unstakeDelay, uint48 expirationDelay);
+	event InsufficientLiquidity(uint256 availableAssets, uint256 requiredAssets);
+	event PendingRequestsNotProcesses(uint256 pendingRequests);
 
 	error DirectAVAXDepositsNotSupported();
 	error InsufficientAVAXBalance();
@@ -79,6 +84,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	error ZeroShares();
 	error InvalidRedemptionAmount();
 	error InvalidYieldAmounts();
+	error MinimumSharesNotMet();
 
 	/// @custom:oz-upgrades-unsafe-allow constructor
 	constructor() {
@@ -89,7 +95,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	/// @param tokenggAVAXAddress The address of the stAVAX token contract
 	/// @param _unstakeDelay How long users must wait before they can claim their AVAX
 	/// @param _expirationDelay How long after claiming period before requests expire
-	function initialize(address payable tokenggAVAXAddress, uint48 _unstakeDelay, uint48 _expirationDelay) public initializer {
+	function initialize(address payable tokenggAVAXAddress, address storageAddress, uint48 _unstakeDelay, uint48 _expirationDelay) public initializer {
 		__ReentrancyGuard_init();
 		__AccessControl_init();
 		_grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
@@ -97,6 +103,10 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		tokenggAVAX = TokenggAVAX(payable(tokenggAVAXAddress));
 		unstakeDelay = _unstakeDelay;
 		expirationDelay = _expirationDelay;
+		store = Storage(storageAddress);
+
+		maxRequestsPerStakingDeposit = 50;
+		minUnstakeOnBehalfOfAmt = 0.01 ether;
 
 		emit ContractInitialized(tokenggAVAXAddress, _unstakeDelay, _expirationDelay);
 	}
@@ -113,71 +123,14 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	/// @param shares How many stAVAX tokens you want to unstake
 	/// @return requestId Your unique request ID for tracking
 	function requestUnstake(uint256 shares) external returns (uint256 requestId) {
-		if (shares == 0) {
-			revert ZeroShares();
-		}
-
-		if (tokenggAVAX.balanceOf(msg.sender) < shares) {
-			revert InsufficientTokenBalance();
-		}
-
-		uint256 expectedAssets = tokenggAVAX.convertToAssets(shares);
-
-		ERC20(address(tokenggAVAX)).safeTransferFrom(msg.sender, address(this), shares);
-
-		requestId = nextRequestId++;
-		uint48 currentTime = uint48(block.timestamp);
-
-		requests[requestId] = UnstakeRequest({
-			requester: msg.sender,
-			shares: shares,
-			expectedAssets: expectedAssets,
-			requestTime: currentTime,
-			claimableTime: currentTime + unstakeDelay,
-			expirationTime: currentTime + unstakeDelay + expirationDelay,
-			allocatedFunds: 0
-		});
-
-		requestsByOwner[msg.sender].add(requestId);
-		pendingRequests.add(requestId);
-		pendingRequestsQueue.pushBack(bytes32(requestId));
-
-		emit UnstakeRequested(requestId, msg.sender, shares, expectedAssets, currentTime + unstakeDelay);
+		return _requestUnstake(shares, msg.sender, msg.sender);
 	}
 
 	function requestUnstakeOnBehalfOf(uint256 shares, address requester) external returns (uint256 requestId) {
-		if (shares == 0) {
-			revert ZeroShares();
+		if (shares < minUnstakeOnBehalfOfAmt) {
+			revert MinimumSharesNotMet();
 		}
-
-		// We want to transfer shares from caller (NOT requester) to this contract
-		if (tokenggAVAX.balanceOf(msg.sender) < shares) {
-			revert InsufficientTokenBalance();
-		}
-
-		uint256 expectedAssets = tokenggAVAX.convertToAssets(shares);
-
-		// We want to transfer shares from caller (NOT requester) to this contract
-		ERC20(address(tokenggAVAX)).safeTransferFrom(msg.sender, address(this), shares);
-
-		requestId = nextRequestId++;
-		uint48 currentTime = uint48(block.timestamp);
-
-		requests[requestId] = UnstakeRequest({
-			requester: requester,
-			shares: shares,
-			expectedAssets: expectedAssets,
-			requestTime: currentTime,
-			claimableTime: currentTime + unstakeDelay,
-			expirationTime: currentTime + unstakeDelay + expirationDelay,
-			allocatedFunds: 0
-		});
-
-		requestsByOwner[requester].add(requestId);
-		pendingRequests.add(requestId);
-		pendingRequestsQueue.pushBack(bytes32(requestId));
-
-		emit UnstakeRequested(requestId, requester, shares, expectedAssets, currentTime + unstakeDelay);
+		return _requestUnstake(shares, msg.sender, requester);
 	}
 
 	/// @notice Claim your AVAX after your unstake request is fulfilled
@@ -211,7 +164,6 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		uint256 amount = req.allocatedFunds;
 
 		// Clean up all request data
-		req.allocatedFunds = 0;
 		totalAllocatedFunds -= amount;
 		fulfilledRequests.remove(requestId);
 
@@ -280,14 +232,10 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			uint256 avaxAmount = req.allocatedFunds;
 
 			// Update accounting BEFORE external call (checks-effects-interactions)
-			req.allocatedFunds = 0;
 			totalAllocatedFunds -= avaxAmount;
 
 			// Remove from fulfilled queue BEFORE external call
 			fulfilledRequests.remove(requestId);
-
-			// Store necessary data before cleanup
-			address requester = req.requester;
 
 			// Clean up request data BEFORE external call
 			requestsByOwner[msg.sender].remove(requestId);
@@ -297,7 +245,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			sharesToReturn = tokenggAVAX.depositAVAX{value: avaxAmount}();
 
 			// Emit event after we know sharesToReturn
-			emit RequestCancelled(requestId, requester, sharesToReturn);
+			emit RequestCancelled(requestId, msg.sender, sharesToReturn);
 		} else {
 			revert RequestNotPending();
 		}
@@ -327,7 +275,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 	/// @notice Deposit AVAX to help fulfill pending unstake requests
 	/// @dev Uses the deposited AVAX to fulfill waiting requests, sends excess back to stAVAX
-	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt, bytes32 source) public payable onlyRole(DEPOSITOR_ROLE) {
+	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt, bytes32 source) external payable onlyRole(DEPOSITOR_ROLE) {
 		// Validate that the sum of baseAmt and rewardAmt equals msg.value
 		if (baseAmt + rewardAmt != msg.value) {
 			revert InvalidYieldAmounts();
@@ -348,7 +296,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 		// Process pending requests from front of queue, removing fulfilled requests and then leave the money in the contract if still more to process
 		uint256 requestsProcessed = 0;
-		while (pendingRequests.length() > 0 && requestsProcessed < maxPendingRequestsLimit) {
+		while (pendingRequests.length() > 0 && requestsProcessed < maxRequestsPerStakingDeposit) {
 			uint256 requestId = uint256(pendingRequestsQueue.front());
 			if (!pendingRequests.contains(requestId)) {
 				pendingRequestsQueue.popFront();
@@ -362,23 +310,48 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 			uint256 withdrawQueueAvailableAssets = address(this).balance > totalAllocatedFunds ? address(this).balance - totalAllocatedFunds : 0;
 			if (withdrawQueueAvailableAssets + ggAVAXAvailableAssets < req.expectedAssets) {
+				emit InsufficientLiquidity(withdrawQueueAvailableAssets + ggAVAXAvailableAssets, req.expectedAssets);
+				if (excessAVAX > 0) {
+					_depositYield(excessAVAX);
+				}
 				return;
 			}
 
 			// Determine if we need to deposit additional assets to ggAVAX
 			if (ggAVAXAvailableAssets < req.expectedAssets) {
-				uint256 amountToDeposit = req.expectedAssets - ggAVAXAvailableAssets;
-				uint256 proRatedRewardAmt = amountToDeposit.mulWadDown(rewardToBaseRatio);
-				uint256 proRatedBaseAmt = amountToDeposit - proRatedRewardAmt;
+				uint256 depositAmountIncludingFees = req.expectedAssets - ggAVAXAvailableAssets;
 
-				if (baseAmt > 0) {
+				uint256 feeBips = store.getUint(keccak256(abi.encodePacked("ProtocolDAO.FeeBips")));
+
+				if (feeBips > 0 && rewardToBaseRatio > 0) {
+					uint256 scaleFactor = uint256(1 ether).mulDivUp(10000, 10000 - feeBips);
+					depositAmountIncludingFees = depositAmountIncludingFees.mulWadUp(scaleFactor);
+				}
+
+				if (depositAmountIncludingFees > withdrawQueueAvailableAssets) {
+					emit InsufficientLiquidity(withdrawQueueAvailableAssets, depositAmountIncludingFees);
+					if (excessAVAX > 0) {
+						_depositYield(excessAVAX);
+					}
+					return;
+				}
+
+				uint256 proRatedRewardAmt = depositAmountIncludingFees.mulWadDown(rewardToBaseRatio);
+				uint256 proRatedBaseAmt = depositAmountIncludingFees - proRatedRewardAmt;
+
+				if (proRatedBaseAmt > baseAmt) {
+					baseAmt = 0;
+				} else {
 					baseAmt -= proRatedBaseAmt;
 				}
-				if (rewardAmt > 0) {
+
+				if (proRatedRewardAmt > rewardAmt) {
+					rewardAmt = 0;
+				} else {
 					rewardAmt -= proRatedRewardAmt;
 				}
 
-				_depositToGGAVAX(proRatedBaseAmt, proRatedRewardAmt, source, amountToDeposit);
+				_depositToGGAVAX(proRatedBaseAmt, proRatedRewardAmt, source, depositAmountIncludingFees);
 			}
 
 			// Try to redeem all shares from initial request
@@ -403,19 +376,28 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 					excessAVAX += assetsReturned - req.expectedAssets;
 				}
 				requestsProcessed++;
-			} catch {
-				// stAVAX doesn't have enough liquidity for this request, stop processing
-				// Leave this request in the pending set for next time
-				break;
+			} catch (bytes memory reason) {
+				// Check if this is specifically an insufficient liquidity error
+				if (reason.length >= 4 && bytes4(reason) == TokenggAVAX.InsufficientLiquidity.selector) {
+					// stAVAX doesn't have enough liquidity for this request, stop processing
+					// Leave this request in the pending set for next time
+					break;
+				}
+				// For other errors, bubble up rather than assuming liquidity issue
+				// This preserves the original error for debugging
+				assembly {
+					revert(add(reason, 0x20), mload(reason))
+				}
 			}
 		}
 
-		if (pendingRequests.length() != 0) {
-			return;
+		if (excessAVAX > 0) {
+			_depositYield(excessAVAX);
 		}
 
-		if (excessAVAX > 0) {
-			tokenggAVAX.depositYield{value: excessAVAX}(bytes32("WITHDRAW_QUEUE"));
+		if (pendingRequests.length() != 0) {
+			emit PendingRequestsNotProcesses(pendingRequests.length());
+			return;
 		}
 
 		// Handle any remaining amounts after processing all pending requests
@@ -457,7 +439,6 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			reclaimedAmount = req.allocatedFunds;
 
 			// Clean up all request data
-			req.allocatedFunds = 0;
 			totalAllocatedFunds -= reclaimedAmount;
 			fulfilledRequests.remove(requestId);
 			requestsByOwner[requester].remove(requestId);
@@ -583,14 +564,26 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 	/// @notice Get the current max pending requests limit
 	/// @return The current max pending requests limit
-	function getMaxPendingRequestsLimit() external view returns (uint256) {
-		return maxPendingRequestsLimit;
+	function getMaxRequestsPerStakingDeposit() external view returns (uint256) {
+		return maxRequestsPerStakingDeposit;
 	}
 
 	/// @notice Set the max pending requests limit (admin only)
 	/// @param newLimit The new max pending requests limit
-	function setMaxPendingRequestsLimit(uint256 newLimit) external onlyRole(DEFAULT_ADMIN_ROLE) {
-		maxPendingRequestsLimit = newLimit;
+	function setMaxRequestsPerStakingDeposit(uint256 newLimit) external onlyRole(DEFAULT_ADMIN_ROLE) {
+		maxRequestsPerStakingDeposit = newLimit;
+	}
+
+	/// @notice Set the minimum unstake amount on behalf of (admin only)
+	/// @param newMinUnstakeOnBehalfOfAmt The new minimum unstake amount on behalf of
+	function setMinUnstakeOnBehalfOfAmt(uint256 newMinUnstakeOnBehalfOfAmt) external onlyRole(DEFAULT_ADMIN_ROLE) {
+		minUnstakeOnBehalfOfAmt = newMinUnstakeOnBehalfOfAmt;
+	}
+
+	/// @notice Get the minimum unstake amount on behalf of
+	/// @return The minimum unstake amount on behalf of
+	function getMinUnstakeOnBehalfOfAmt() external view returns (uint256) {
+		return minUnstakeOnBehalfOfAmt;
 	}
 
 	/// @notice Set the unstake delay (admin only)
@@ -623,11 +616,29 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		return block.timestamp >= req.claimableTime && block.timestamp < req.expirationTime;
 	}
 
-	/// @notice Get all unstake request IDs for a specific user
-	/// @param user The address of the user
-	/// @return Array of all request IDs belonging to that user
-	function getRequestsByOwner(address user) external view returns (uint256[] memory) {
-		return requestsByOwner[user].values();
+	/// @notice Get unstake request IDs for a user, paginated
+	/// @param user   The address of the user
+	/// @param offset How many entries to skip (0-based)
+	/// @param limit  Max number of entries to return; if 0, returns all after offset
+	/// @return ids   Array of request IDs in the requested slice
+	function getRequestsByOwner(address user, uint256 offset, uint256 limit) external view returns (uint256[] memory ids) {
+		uint256 total = requestsByOwner[user].length();
+
+		if (offset >= total) {
+			return new uint256[](0);
+		}
+
+		// if limit==0, return everything from offset; otherwise cap at total
+		uint256 end = limit == 0 ? total : offset + limit;
+		if (end > total) {
+			end = total;
+		}
+
+		uint256 count = end - offset;
+		ids = new uint256[](count);
+		for (uint256 i = 0; i < count; i++) {
+			ids[i] = requestsByOwner[user].at(offset + i);
+		}
 	}
 
 	/// @notice Get how many unstake requests are still waiting to be fulfilled
@@ -720,12 +731,56 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		tokenggAVAX.depositFromStaking{value: value}(baseAmt, rewardAmt, source);
 	}
 
+	/// @notice Deposit AVAX to ggAVAX via yield method
+	/// @param value The amount of AVAX to deposit
+	function _depositYield(uint256 value) internal {
+		tokenggAVAX.depositYield{value: value}(bytes32("WITHDRAW_QUEUE"));
+	}
+
 	/// @notice Get the amount of AVAX available in ggAVAX for redemption
 	/// @return The amount of AVAX available in ggAVAX for redemption
 	function _getGGAVAXAvailableAssets() internal view returns (uint256) {
 		uint256 totalAssets = tokenggAVAX.totalAssets();
 		uint256 stakingTotal = tokenggAVAX.stakingTotalAssets();
 		return totalAssets > stakingTotal ? totalAssets - stakingTotal : 0;
+	}
+
+	/// @dev Internal function implementing the core unstake request logic
+	/// @param shares The number of shares to unstake
+	/// @param shareProvider The address that provides the shares (caller)
+	/// @param requester The address that will own the request and receive the funds
+	/// @return requestId The unique identifier for the created request
+	function _requestUnstake(uint256 shares, address shareProvider, address requester) internal returns (uint256 requestId) {
+		if (shares == 0) {
+			revert ZeroShares();
+		}
+
+		if (tokenggAVAX.balanceOf(shareProvider) < shares) {
+			revert InsufficientTokenBalance();
+		}
+
+		uint256 expectedAssets = tokenggAVAX.convertToAssets(shares);
+
+		ERC20(address(tokenggAVAX)).safeTransferFrom(shareProvider, address(this), shares);
+
+		requestId = nextRequestId++;
+		uint48 currentTime = uint48(block.timestamp);
+
+		requests[requestId] = UnstakeRequest({
+			requester: requester,
+			shares: shares,
+			expectedAssets: expectedAssets,
+			requestTime: currentTime,
+			claimableTime: currentTime + unstakeDelay,
+			expirationTime: currentTime + unstakeDelay + expirationDelay,
+			allocatedFunds: 0
+		});
+
+		requestsByOwner[requester].add(requestId);
+		pendingRequests.add(requestId);
+		pendingRequestsQueue.pushBack(bytes32(requestId));
+
+		emit UnstakeRequested(requestId, requester, shares, expectedAssets, currentTime + unstakeDelay);
 	}
 
 	/// @dev Storage gap for future upgrades

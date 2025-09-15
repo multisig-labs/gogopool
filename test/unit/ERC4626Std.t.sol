@@ -31,7 +31,11 @@ contract ERC4626StdTest is ERC4626Test {
 		ggAVAX.syncRewards();
 
 		// Grant DEFAULT_ADMIN_ROLE to the test contract so it can grant roles during testing
-		ggAVAX.grantRole(ggAVAX.DEFAULT_ADMIN_ROLE(), address(this));
+		ggAVAX.transferAdmin(address(this));
+		vm.stopPrank();
+
+		ggAVAX.acceptAdmin();
+
 
 		_vault_ = address(ggAVAX);
 		_delta_ = 0;

@@ -314,44 +314,9 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 	// Renounce Admin Tests
 	// =============================================================================
 
-	function testRenounceAdmin() public {
-		// Initiate transfer first
-		vm.prank(admin);
-		token.transferAdmin(newAdmin);
-
-		// Renounce admin
-		vm.prank(admin);
-		token.renounceAdmin();
-
-		// Admin should no longer have role
-		assertFalse(token.hasRole(DEFAULT_ADMIN_ROLE, admin));
-		assertEq(token.admin(), address(0));
-		assertEq(token.pendingAdmin(), newAdmin);
-	}
-
-	function testRenounceAdminRequiresPendingAdmin() public {
-		// Cannot renounce without pending admin
-		vm.expectRevert("Must have pending admin to renounce");
-
-		vm.prank(admin);
-		token.renounceAdmin();
-	}
-
-	function testRenounceAdminOnlyAdmin() public {
-		// Initiate transfer
-		vm.prank(admin);
-		token.transferAdmin(newAdmin);
-
-		// Only admin can renounce
-		vm.expectRevert(abi.encodeWithSelector(
-			TokenggAVAX.AccessControlUnauthorizedAccount.selector,
-			user1,
-			DEFAULT_ADMIN_ROLE
-		));
-
-		vm.prank(user1);
-		token.renounceAdmin();
-	}
+	// NOTE: renounceAdmin() tests removed as the function has been removed
+	// for security reasons (HYP-2 audit fix). The function was dangerous as it
+	// could create zero admin scenarios.
 
 	// =============================================================================
 	// Role Access Control Tests
@@ -481,6 +446,200 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 		vm.prank(newAdmin);
 		token.acceptAdmin();
 		assertEq(token.admin(), newAdmin);
+	}
+
+	// =============================================================================
+	// HYP-2 Audit Fix Tests
+	// =============================================================================
+
+	function testCannotGrantDefaultAdminRole() public {
+		// This test verifies the fix for HYP-2 issue #1:
+		// grantRole() now reverts when attempting to grant DEFAULT_ADMIN_ROLE
+
+		// Initial state: admin is the default admin
+		assertTrue(token.hasRole(DEFAULT_ADMIN_ROLE, admin));
+		assertEq(token.admin(), admin);
+
+		// Create a new admin candidate
+		address candidateAdmin = getActor("candidateAdmin");
+
+		// Attempting to grant DEFAULT_ADMIN_ROLE should now revert
+		vm.startPrank(admin);
+		vm.expectRevert(TokenggAVAX.CannotGrantDefaultAdminRole.selector);
+		token.grantRole(DEFAULT_ADMIN_ROLE, candidateAdmin);
+		vm.stopPrank();
+
+		// Verify state unchanged - only admin has admin role
+		assertTrue(token.hasRole(DEFAULT_ADMIN_ROLE, admin));
+		assertFalse(token.hasRole(DEFAULT_ADMIN_ROLE, candidateAdmin));
+
+		// Admin should still be able to grant other roles
+		vm.startPrank(admin);
+		token.grantRole(STAKER_ROLE, user1);
+		vm.stopPrank();
+		assertTrue(token.hasRole(STAKER_ROLE, user1));
+	}
+
+	function testRenounceAdminFunctionRemoved() public {
+		// This test verifies the fix for HYP-2 issue #2:
+		// renounceAdmin() function has been removed to prevent zero admin scenarios
+		
+		// Initial state: admin is the default admin
+		assertTrue(token.hasRole(DEFAULT_ADMIN_ROLE, admin));
+		assertEq(token.admin(), admin);
+		assertEq(token.pendingAdmin(), address(0));
+
+		// Create a new admin candidate
+		address candidateAdmin = getActor("candidateAdmin");
+
+		// Step 1: Current admin initiates transfer to new admin
+		vm.startPrank(admin);
+		token.transferAdmin(candidateAdmin);
+		vm.stopPrank();
+
+		// Verify transfer is pending
+		assertEq(token.pendingAdmin(), candidateAdmin);
+		assertTrue(token.hasRole(DEFAULT_ADMIN_ROLE, admin));
+		assertFalse(token.hasRole(DEFAULT_ADMIN_ROLE, candidateAdmin));
+
+		// Step 2: The fix prevents zero admin scenarios because:
+		// - renounceAdmin() function no longer exists (would cause compilation error if called)
+		// - Current admin retains admin role until new admin accepts
+		// - Admin can cancel transfer if needed
+		
+		// Uncommenting the line below would cause a compilation error:
+		// token.renounceAdmin(); // <- This function no longer exists!
+		
+		// Admin still has admin role during pending transfer (no zero admin state possible)
+		assertTrue(token.hasRole(DEFAULT_ADMIN_ROLE, admin));
+		assertEq(token.admin(), admin); // Admin still the admin
+		
+		// Admin can still perform admin functions during pending transfer
+		vm.startPrank(admin);
+		token.grantRole(STAKER_ROLE, user1);
+		vm.stopPrank();
+		assertTrue(token.hasRole(STAKER_ROLE, user1));
+
+		// Step 3: Admin can cancel transfer if needed (safe alternative to renounce)
+		vm.startPrank(admin);
+		token.cancelAdminTransfer();
+		vm.stopPrank();
+		
+		// Verify transfer was canceled - still have admin, no zero admin state
+		assertEq(token.pendingAdmin(), address(0));
+		assertTrue(token.hasRole(DEFAULT_ADMIN_ROLE, admin));
+		assertEq(token.admin(), admin);
+
+		// Step 4: Demonstrate proper admin transfer flow (safe, atomic)
+		vm.startPrank(admin);
+		token.transferAdmin(candidateAdmin);
+		vm.stopPrank();
+
+		// Admin retains admin role until new admin accepts (no gap)
+		assertTrue(token.hasRole(DEFAULT_ADMIN_ROLE, admin));
+		assertFalse(token.hasRole(DEFAULT_ADMIN_ROLE, candidateAdmin));
+		assertEq(token.admin(), admin);
+		assertEq(token.pendingAdmin(), candidateAdmin);
+
+		// New admin accepts transfer - atomic role transfer occurs
+		vm.startPrank(candidateAdmin);
+		token.acceptAdmin();
+		vm.stopPrank();
+
+		// Verify proper atomic transfer - old admin revoked, new admin granted, no gap
+		assertFalse(token.hasRole(DEFAULT_ADMIN_ROLE, admin));
+		assertTrue(token.hasRole(DEFAULT_ADMIN_ROLE, candidateAdmin));
+		assertEq(token.admin(), candidateAdmin);
+		assertEq(token.pendingAdmin(), address(0));
+
+		// New admin can perform admin functions
+		vm.startPrank(candidateAdmin);
+		token.grantRole(STAKER_ROLE, user2);
+		vm.stopPrank();
+		assertTrue(token.hasRole(STAKER_ROLE, user2));
+	}
+
+	function testTransferAdminToSelfReverts() public {
+		// Should not be able to transfer admin to yourself
+		vm.startPrank(admin);
+		vm.expectRevert("Cannot transfer to self");
+		token.transferAdmin(admin);
+		vm.stopPrank();
+	}
+
+	function testTransferAdminToZeroAddressReverts() public {
+		// Should not be able to transfer admin to zero address
+		vm.startPrank(admin);
+		vm.expectRevert("New admin cannot be zero address");
+		token.transferAdmin(address(0));
+		vm.stopPrank();
+	}
+
+	function testMultipleTransferAdminOverwritesPending() public {
+		// Multiple transfers should overwrite the pending admin
+		address firstCandidate = getActor("firstCandidate");
+		address secondCandidate = getActor("secondCandidate");
+		
+		vm.startPrank(admin);
+		token.transferAdmin(firstCandidate);
+		assertEq(token.pendingAdmin(), firstCandidate);
+		
+		// Transfer to second candidate should overwrite
+		token.transferAdmin(secondCandidate);
+		assertEq(token.pendingAdmin(), secondCandidate);
+		vm.stopPrank();
+		
+		// First candidate can't accept anymore
+		vm.startPrank(firstCandidate);
+		vm.expectRevert("Only pending admin can accept");
+		token.acceptAdmin();
+		vm.stopPrank();
+		
+		// Second candidate can accept
+		vm.startPrank(secondCandidate);
+		token.acceptAdmin();
+		vm.stopPrank();
+		
+		assertEq(token.admin(), secondCandidate);
+	}
+
+	function testAdminTransferEventsEmitted() public {
+		// Test that proper events are emitted during admin transfer process
+		address newAdminCandidate = getActor("newAdminCandidate");
+		
+		// Test AdminTransferInitiated event
+		vm.expectEmit(true, true, true, true);
+		emit AdminTransferInitiated(admin, newAdminCandidate);
+		
+		vm.startPrank(admin);
+		token.transferAdmin(newAdminCandidate);
+		vm.stopPrank();
+		
+		// Test AdminTransferCompleted event and role events
+		vm.expectEmit(true, true, true, true);
+		emit RoleRevoked(DEFAULT_ADMIN_ROLE, admin, newAdminCandidate);
+		vm.expectEmit(true, true, true, true);
+		emit RoleGranted(DEFAULT_ADMIN_ROLE, newAdminCandidate, newAdminCandidate);
+		vm.expectEmit(true, true, true, true);
+		emit AdminTransferCompleted(admin, newAdminCandidate);
+		
+		vm.startPrank(newAdminCandidate);
+		token.acceptAdmin();
+		vm.stopPrank();
+	}
+
+	function testAdminTransferCancelEmitsEvent() public {
+		address newAdminCandidate = getActor("newAdminCandidate");
+		
+		vm.startPrank(admin);
+		token.transferAdmin(newAdminCandidate);
+		
+		// Test AdminTransferCanceled event
+		vm.expectEmit(true, true, true, true);
+		emit AdminTransferCanceled(admin, newAdminCandidate);
+		
+		token.cancelAdminTransfer();
+		vm.stopPrank();
 	}
 
 	// =============================================================================

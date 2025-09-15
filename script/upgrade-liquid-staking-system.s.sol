@@ -67,7 +67,7 @@ contract UpgradeTokenggAVAX is Script, EnvironmentConfig {
 		TransparentUpgradeableProxy withdrawQueueProxy = new TransparentUpgradeableProxy(
 			address(withdrawQueueImpl),
 			address(withdrawQueueProxyAdmin),
-			abi.encodeWithSelector(withdrawQueueImpl.initialize.selector, getAddress("TokenggAVAX"), unstakeDelay, expirationDelay)
+			abi.encodeWithSelector(withdrawQueueImpl.initialize.selector, getAddress("TokenggAVAX"), getAddress("Storage"), unstakeDelay, expirationDelay)
 		);
 		console2.log("WithdrawQueue proxy deployed at", address(withdrawQueueProxy));
 		console2.log("Default admin (deployer):", deployer);
@@ -78,10 +78,10 @@ contract UpgradeTokenggAVAX is Script, EnvironmentConfig {
 			withdrawQueue.grantRole(withdrawQueue.DEPOSITOR_ROLE(), address(depositor));
 			withdrawQueue.grantRole(withdrawQueue.DEFAULT_ADMIN_ROLE(), address(guardian));
 
-			// Configure maxPendingRequestsLimit
+			// Configure maxRequestsPerStakingDeposit
 			uint256 maxPendingRequests = vm.envUint("MAX_PENDING_REQUESTS_LIMIT");
-			withdrawQueue.setMaxPendingRequestsLimit(maxPendingRequests);
-			console2.log("MaxPendingRequestsLimit set to:", maxPendingRequests);
+			withdrawQueue.setMaxRequestsPerStakingDeposit(maxPendingRequests);
+			console2.log("MaxRequestsPerStakingDeposit set to:", maxPendingRequests);
 
 			withdrawQueue.renounceRole(withdrawQueue.DEFAULT_ADMIN_ROLE(), address(deployer));
 		}
@@ -248,7 +248,7 @@ contract UpgradeTokenggAVAX is Script, EnvironmentConfig {
 
 		// Verify max pending requests limit
 		uint256 expectedMaxPending = vm.envUint("MAX_PENDING_REQUESTS_LIMIT");
-		require(withdrawQueue.getMaxPendingRequestsLimit() == expectedMaxPending, "Max pending requests limit mismatch");
+		require(withdrawQueue.getMaxRequestsPerStakingDeposit() == expectedMaxPending, "Max requests per staking deposit mismatch");
 		console2.log("._/ WithdrawQueue max pending requests limit set correctly");
 
 		// Verify depositor role

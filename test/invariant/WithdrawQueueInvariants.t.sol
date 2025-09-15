@@ -30,7 +30,7 @@ contract WithdrawQueueInvariants is BaseTest {
 		// Deploy WithdrawQueue
 		vm.startPrank(guardian);
 		WithdrawQueue withdrawQueueImpl = new WithdrawQueue();
-		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), UNSTAKE_DELAY, EXPIRATION_DELAY);
+		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), address(store), UNSTAKE_DELAY, EXPIRATION_DELAY);
 
 		TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(withdrawQueueImpl), address(proxyAdmin), initData);
 		withdrawQueue = WithdrawQueue(payable(address(proxy)));
@@ -41,8 +41,8 @@ contract WithdrawQueueInvariants is BaseTest {
 		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), charlie);
 		withdrawQueue.grantRole(withdrawQueue.DEPOSITOR_ROLE(), charlie);
 
-		// Set max pending requests limit for testing
-		withdrawQueue.setMaxPendingRequestsLimit(25);
+		// Set max requests per staking deposit for testing
+		withdrawQueue.setMaxRequestsPerStakingDeposit(25);
 
 		// Set reserve ratio to 0% so all funds can be withdrawn for staking
 		store.setUint(keccak256("ProtocolDAO.TargetGGAVAXReserveRate"), 0);
@@ -66,14 +66,14 @@ contract WithdrawQueueInvariants is BaseTest {
 	function invariant_totalSystemBalanceConservation() external view {
 		uint256 systemAssets = address(withdrawQueue).balance + ggAVAX.totalAssets();
 		uint256 systemObligations = withdrawQueue.totalAllocatedFunds() + _calculateTotalPendingExpectedAssets();
-		
+
 		if (systemAssets < systemObligations) {
 			console2.log("INVARIANT VIOLATION: Total System Balance Conservation");
 			console2.log("System Assets:", systemAssets);
 			console2.log("System Obligations:", systemObligations);
 			console2.log("Deficit:", systemObligations - systemAssets);
 		}
-		
+
 		assert(systemAssets >= systemObligations);
 	}
 
@@ -82,13 +82,13 @@ contract WithdrawQueueInvariants is BaseTest {
 	function invariant_allocatedFundsAccounting() external view {
 		uint256 totalAllocated = withdrawQueue.totalAllocatedFunds();
 		uint256 sumOfFulfilledAllocations = _calculateSumOfFulfilledAllocations();
-		
+
 		if (totalAllocated != sumOfFulfilledAllocations) {
 			console2.log("INVARIANT VIOLATION: Allocated Funds Accounting");
 			console2.log("Total Allocated:", totalAllocated);
 			console2.log("Sum of Fulfilled Allocations:", sumOfFulfilledAllocations);
 		}
-		
+
 		assert(totalAllocated == sumOfFulfilledAllocations);
 	}
 
@@ -97,13 +97,13 @@ contract WithdrawQueueInvariants is BaseTest {
 	function invariant_shareConservation() external view {
 		uint256 withdrawQueueShares = ggAVAX.balanceOf(address(withdrawQueue));
 		uint256 totalRequestShares = _calculateTotalRequestShares();
-		
+
 		if (withdrawQueueShares != totalRequestShares) {
 			console2.log("INVARIANT VIOLATION: Share Conservation");
 			console2.log("WithdrawQueue Shares:", withdrawQueueShares);
 			console2.log("Total Request Shares:", totalRequestShares);
 		}
-		
+
 		assert(withdrawQueueShares == totalRequestShares);
 	}
 
@@ -117,19 +117,19 @@ contract WithdrawQueueInvariants is BaseTest {
 			bool isFulfilled = withdrawQueue.isFulfilledRequest(i);
 			WithdrawQueue.UnstakeRequest memory req = withdrawQueue.getRequestInfo(i);
 			bool exists = req.requester != address(0);
-			
+
 			if (isPending && isFulfilled) {
 				console2.log("INVARIANT VIOLATION: Request State Exclusivity - Request is both pending and fulfilled");
 				console2.log("Request ID:", i);
 			}
-			
+
 			if ((isPending || isFulfilled) && !exists) {
 				console2.log("INVARIANT VIOLATION: Request State Exclusivity - Request in set but doesn't exist");
 				console2.log("Request ID:", i);
 				console2.log("Is Pending:", isPending);
 				console2.log("Is Fulfilled:", isFulfilled);
 			}
-			
+
 			assert(!(isPending && isFulfilled));
 			assert(!(isPending && !exists));
 			assert(!(isFulfilled && !exists));
@@ -142,17 +142,17 @@ contract WithdrawQueueInvariants is BaseTest {
 		address[] memory users = handler.getUsers();
 		for (uint256 j = 0; j < users.length; j++) {
 			address user = users[j];
-			uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(user);
+			uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(user, 0, 0);
 			for (uint256 k = 0; k < userRequests.length; k++) {
 				WithdrawQueue.UnstakeRequest memory req = withdrawQueue.getRequestInfo(userRequests[k]);
-				
+
 				if (req.requester != user) {
 					console2.log("INVARIANT VIOLATION: Request Ownership Consistency");
 					console2.log("User:", user);
 					console2.log("Request ID:", userRequests[k]);
 					console2.log("Actual Requester:", req.requester);
 				}
-				
+
 				assert(req.requester == user);
 			}
 		}
@@ -164,12 +164,12 @@ contract WithdrawQueueInvariants is BaseTest {
 		uint256[] memory pendingRequests = withdrawQueue.getAllPendingRequests();
 		for (uint256 i = 0; i < pendingRequests.length; i++) {
 			bool isPending = withdrawQueue.isRequestPending(pendingRequests[i]);
-			
+
 			if (!isPending) {
 				console2.log("INVARIANT VIOLATION: Queue Ordering Consistency");
 				console2.log("Request ID in pending array but not in pending set:", pendingRequests[i]);
 			}
-			
+
 			assert(isPending);
 		}
 	}
@@ -182,21 +182,21 @@ contract WithdrawQueueInvariants is BaseTest {
 		for (uint256 i = 0; i < withdrawQueue.nextRequestId(); i++) {
 			WithdrawQueue.UnstakeRequest memory req = withdrawQueue.getRequestInfo(i);
 			if (req.requester != address(0)) {
-				
+
 				if (req.requestTime > req.claimableTime) {
 					console2.log("INVARIANT VIOLATION: Time Progression - requestTime > claimableTime");
 					console2.log("Request ID:", i);
 					console2.log("Request Time:", req.requestTime);
 					console2.log("Claimable Time:", req.claimableTime);
 				}
-				
+
 				if (req.claimableTime > req.expirationTime) {
 					console2.log("INVARIANT VIOLATION: Time Progression - claimableTime > expirationTime");
 					console2.log("Request ID:", i);
 					console2.log("Claimable Time:", req.claimableTime);
 					console2.log("Expiration Time:", req.expirationTime);
 				}
-				
+
 				assert(req.requestTime <= req.claimableTime);
 				assert(req.claimableTime <= req.expirationTime);
 			}
@@ -208,25 +208,25 @@ contract WithdrawQueueInvariants is BaseTest {
 	function invariant_delayConsistency() external view {
 		uint48 unstakeDelay = withdrawQueue.unstakeDelay();
 		uint48 expirationDelay = withdrawQueue.expirationDelay();
-		
+
 		for (uint256 i = 0; i < withdrawQueue.nextRequestId(); i++) {
 			WithdrawQueue.UnstakeRequest memory req = withdrawQueue.getRequestInfo(i);
 			if (req.requester != address(0)) {
-				
+
 				if (req.claimableTime != req.requestTime + unstakeDelay) {
 					console2.log("INVARIANT VIOLATION: Delay Consistency - claimableTime incorrect");
 					console2.log("Request ID:", i);
 					console2.log("Expected claimableTime:", req.requestTime + unstakeDelay);
 					console2.log("Actual claimableTime:", req.claimableTime);
 				}
-				
+
 				if (req.expirationTime != req.claimableTime + expirationDelay) {
 					console2.log("INVARIANT VIOLATION: Delay Consistency - expirationTime incorrect");
 					console2.log("Request ID:", i);
 					console2.log("Expected expirationTime:", req.claimableTime + expirationDelay);
 					console2.log("Actual expirationTime:", req.expirationTime);
 				}
-				
+
 				assert(req.claimableTime == req.requestTime + unstakeDelay);
 				assert(req.expirationTime == req.claimableTime + expirationDelay);
 			}
@@ -241,17 +241,17 @@ contract WithdrawQueueInvariants is BaseTest {
 		for (uint256 i = 0; i < withdrawQueue.nextRequestId(); i++) {
 			WithdrawQueue.UnstakeRequest memory req = withdrawQueue.getRequestInfo(i);
 			if (req.requester != address(0)) {
-				
+
 				if (req.expectedAssets == 0) {
 					console2.log("INVARIANT VIOLATION: Expected Assets Validity - expectedAssets is zero");
 					console2.log("Request ID:", i);
 				}
-				
+
 				if (req.shares == 0) {
 					console2.log("INVARIANT VIOLATION: Expected Assets Validity - shares is zero");
 					console2.log("Request ID:", i);
 				}
-				
+
 				assert(req.expectedAssets > 0);
 				assert(req.shares > 0);
 			}
@@ -263,13 +263,13 @@ contract WithdrawQueueInvariants is BaseTest {
 	function invariant_noNegativeBalances() external view {
 		uint256 totalAllocated = withdrawQueue.totalAllocatedFunds();
 		uint256 contractBalance = address(withdrawQueue).balance;
-		
+
 		if (contractBalance < totalAllocated) {
 			console2.log("INVARIANT VIOLATION: No Negative Balances - insufficient balance");
 			console2.log("Contract Balance:", contractBalance);
 			console2.log("Total Allocated:", totalAllocated);
 		}
-		
+
 		assert(contractBalance >= totalAllocated);
 	}
 
@@ -281,13 +281,13 @@ contract WithdrawQueueInvariants is BaseTest {
 		uint256[] memory fulfilledRequests = withdrawQueue.getAllFulfilledRequests();
 		for (uint256 i = 0; i < fulfilledRequests.length; i++) {
 			WithdrawQueue.UnstakeRequest memory req = withdrawQueue.getRequestInfo(fulfilledRequests[i]);
-			
+
 			if (req.allocatedFunds == 0) {
 				console2.log("INVARIANT VIOLATION: Fulfilled Request Completeness");
 				console2.log("Request ID:", fulfilledRequests[i]);
 				console2.log("Allocated Funds:", req.allocatedFunds);
 			}
-			
+
 			assert(req.allocatedFunds > 0);
 		}
 	}
@@ -299,7 +299,7 @@ contract WithdrawQueueInvariants is BaseTest {
 		for (uint256 i = 1; i < pendingRequests.length; i++) {
 			WithdrawQueue.UnstakeRequest memory prevReq = withdrawQueue.getRequestInfo(pendingRequests[i-1]);
 			WithdrawQueue.UnstakeRequest memory currReq = withdrawQueue.getRequestInfo(pendingRequests[i]);
-			
+
 			if (prevReq.requestTime > currReq.requestTime) {
 				console2.log("INVARIANT VIOLATION: FIFO Processing");
 				console2.log("Previous Request ID:", pendingRequests[i-1]);
@@ -307,7 +307,7 @@ contract WithdrawQueueInvariants is BaseTest {
 				console2.log("Current Request ID:", pendingRequests[i]);
 				console2.log("Current Request Time:", currReq.requestTime);
 			}
-			
+
 			assert(prevReq.requestTime <= currReq.requestTime);
 		}
 	}
@@ -336,12 +336,12 @@ contract WithdrawQueueInvariants is BaseTest {
 	function _calculateTotalRequestShares() internal view returns (uint256 total) {
 		uint256[] memory pendingRequests = withdrawQueue.getAllPendingRequests();
 		uint256[] memory fulfilledRequests = withdrawQueue.getAllFulfilledRequests();
-		
+
 		for (uint256 i = 0; i < pendingRequests.length; i++) {
 			WithdrawQueue.UnstakeRequest memory req = withdrawQueue.getRequestInfo(pendingRequests[i]);
 			total += req.shares;
 		}
-		
+
 		for (uint256 i = 0; i < fulfilledRequests.length; i++) {
 			WithdrawQueue.UnstakeRequest memory req = withdrawQueue.getRequestInfo(fulfilledRequests[i]);
 			total += req.shares;

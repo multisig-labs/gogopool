@@ -124,7 +124,7 @@ contract WithdrawQueueHandler {
 
 	/// @notice User claims their fulfilled unstake request
 	function claimUnstake(uint256 actorSeed, uint256 requestIdSeed) external useActor(actorSeed) countCall("claimUnstake") {
-		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(msg.sender);
+		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(msg.sender, 0, 0);
 		if (userRequests.length == 0) return;
 
 		uint256 requestId = userRequests[bound(requestIdSeed, 0, userRequests.length - 1)];
@@ -142,7 +142,7 @@ contract WithdrawQueueHandler {
 
 	/// @notice User cancels their pending or fulfilled request
 	function cancelRequest(uint256 actorSeed, uint256 requestIdSeed) external useActor(actorSeed) countCall("cancelRequest") {
-		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(msg.sender);
+		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(msg.sender, 0, 0);
 		if (userRequests.length == 0) return;
 
 		uint256 requestId = userRequests[bound(requestIdSeed, 0, userRequests.length - 1)];

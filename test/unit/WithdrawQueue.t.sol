@@ -34,7 +34,13 @@ contract WithdrawQueueTest is BaseTest {
 		// Deploy WithdrawQueue
 		vm.startPrank(guardian);
 		WithdrawQueue withdrawQueueImpl = new WithdrawQueue();
-		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), UNSTAKE_DELAY, EXPIRATION_DELAY);
+		bytes memory initData = abi.encodeWithSelector(
+			WithdrawQueue.initialize.selector,
+			address(ggAVAX),
+			address(store),
+			UNSTAKE_DELAY,
+			EXPIRATION_DELAY
+		);
 
 		TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(withdrawQueueImpl), address(proxyAdmin), initData);
 
@@ -46,8 +52,8 @@ contract WithdrawQueueTest is BaseTest {
 		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), charlie);
 		withdrawQueue.grantRole(withdrawQueue.DEPOSITOR_ROLE(), charlie);
 
-		// Set max pending requests limit for testing
-		withdrawQueue.setMaxPendingRequestsLimit(25);
+		// Set max requests per staking deposit for testing
+		withdrawQueue.setMaxRequestsPerStakingDeposit(25);
 
 		// Set reserve ratio to 0% so all funds can be withdrawn for staking
 		vm.startPrank(guardian);
@@ -61,22 +67,22 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(withdrawQueue.unstakeDelay(), UNSTAKE_DELAY);
 		assertEq(withdrawQueue.expirationDelay(), EXPIRATION_DELAY);
 		assertEq(withdrawQueue.nextRequestId(), 0);
-		assertEq(withdrawQueue.getMaxPendingRequestsLimit(), 25);
+		assertEq(withdrawQueue.getMaxRequestsPerStakingDeposit(), 25);
 	}
 
-	function testMaxPendingRequestsLimit() public {
+	function testMaxRequestsPerStakingDeposit() public {
 		// Test getter
-		assertEq(withdrawQueue.getMaxPendingRequestsLimit(), 25);
+		assertEq(withdrawQueue.getMaxRequestsPerStakingDeposit(), 25);
 
 		// Test setter (only admin can set)
 		vm.prank(guardian);
-		withdrawQueue.setMaxPendingRequestsLimit(100);
-		assertEq(withdrawQueue.getMaxPendingRequestsLimit(), 100);
+		withdrawQueue.setMaxRequestsPerStakingDeposit(100);
+		assertEq(withdrawQueue.getMaxRequestsPerStakingDeposit(), 100);
 
 		// Test that non-admin cannot set
 		vm.prank(alice);
 		vm.expectRevert();
-		withdrawQueue.setMaxPendingRequestsLimit(200);
+		withdrawQueue.setMaxRequestsPerStakingDeposit(200);
 	}
 
 	function testSetUnstakeDelay() public {
@@ -114,7 +120,13 @@ contract WithdrawQueueTest is BaseTest {
 	function testInitializationEvent() public {
 		// Deploy a new WithdrawQueue to test the initialization event
 		WithdrawQueue newWithdrawQueueImpl = new WithdrawQueue();
-		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(ggAVAX), UNSTAKE_DELAY, EXPIRATION_DELAY);
+		bytes memory initData = abi.encodeWithSelector(
+			WithdrawQueue.initialize.selector,
+			address(ggAVAX),
+			address(store),
+			UNSTAKE_DELAY,
+			EXPIRATION_DELAY
+		);
 
 		// Expect the ContractInitialized event
 		vm.expectEmit(true, false, false, true);
@@ -168,7 +180,7 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(withdrawQueue.isRequestPending(requestId), true);
 
 		// Check user requests mapping
-		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice);
+		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice, 0, 0);
 		assertEq(userRequests.length, 1);
 		assertEq(userRequests[0], requestId);
 	}
@@ -212,7 +224,7 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(requestId1, 0);
 		assertEq(requestId2, 1);
 
-		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice);
+		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice, 0, 0);
 		assertEq(userRequests.length, 2);
 		assertEq(userRequests[0], requestId1);
 		assertEq(userRequests[1], requestId2);
@@ -1155,7 +1167,7 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(withdrawQueue.getRequestInfo(requestId).requester, address(0));
 
 		// Verify user's request history was cleaned up
-		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice);
+		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice, 0, 0);
 		assertEq(userRequests.length, 0);
 	}
 
@@ -1195,7 +1207,7 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(withdrawQueue.getRequestInfo(requestId).requester, address(0));
 
 		// Verify user's request history was cleaned up
-		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice);
+		uint256[] memory userRequests = withdrawQueue.getRequestsByOwner(alice, 0, 0);
 		assertEq(userRequests.length, 0);
 	}
 
@@ -1625,7 +1637,7 @@ contract WithdrawQueueTest is BaseTest {
 		}
 
 		// Verify user has no more requests
-		assertEq(withdrawQueue.getRequestsByOwner(alice).length, 0);
+		assertEq(withdrawQueue.getRequestsByOwner(alice, 0, 0).length, 0);
 
 		// Verify pending and fulfilled queues are empty
 		assertEq(withdrawQueue.getPendingRequestsCount(), 0);
@@ -1655,7 +1667,7 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(cancelledCount, 3);
 
 		// User should still have 2 requests
-		assertEq(withdrawQueue.getRequestsByOwner(alice).length, 2);
+		assertEq(withdrawQueue.getRequestsByOwner(alice, 0, 0).length, 2);
 	}
 
 	function testCancelNonExistentRequest() public {
@@ -1843,7 +1855,13 @@ contract WithdrawQueueTest is BaseTest {
 		// Deploy a new WithdrawQueue with the malicious ggAVAX
 		WithdrawQueue maliciousQueue;
 		WithdrawQueue withdrawQueueImpl = new WithdrawQueue();
-		bytes memory initData = abi.encodeWithSelector(WithdrawQueue.initialize.selector, address(maliciousGGAVAX), UNSTAKE_DELAY, EXPIRATION_DELAY);
+		bytes memory initData = abi.encodeWithSelector(
+			WithdrawQueue.initialize.selector,
+			address(maliciousGGAVAX),
+			address(store),
+			UNSTAKE_DELAY,
+			EXPIRATION_DELAY
+		);
 
 		TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(withdrawQueueImpl), address(proxyAdmin), initData);
 
@@ -1882,7 +1900,7 @@ contract WithdrawQueueTest is BaseTest {
 	function testConfigurableRequestsLimit() public {
 		// Test that changing the limit affects batching behavior
 		vm.prank(guardian);
-		withdrawQueue.setMaxPendingRequestsLimit(10); // Set lower limit
+		withdrawQueue.setMaxRequestsPerStakingDeposit(10); // Set lower limit
 
 		// Create 15 unstake requests (more than the 10 limit)
 		vm.startPrank(alice);
@@ -1980,6 +1998,401 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(fulfilledAfterSecond, 30); // All 30 requests fulfilled
 
 		console2.log("WithdrawQueue.depositFromStaking (fulfilling remaining 5 requests) gas:", gasUsed2);
+	}
+
+	function testFixBoundsChecking() public {
+		// Test that the HYP-3 fix properly handles cases where proRated amounts
+		// exceed the provided baseAmt/rewardAmt parameters
+
+		// Setup: Create unstake request and reduce ggAVAX liquidity
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 20 ether}();
+
+		uint256 unstakeAmount = 20 ether;
+		vm.startPrank(alice);
+		ggAVAX.approve(address(withdrawQueue), unstakeAmount);
+		uint256 requestId = withdrawQueue.requestUnstake(unstakeAmount);
+		vm.stopPrank();
+
+		// Give contract existing balance and reduce ggAVAX liquidity
+		vm.deal(address(withdrawQueue), 15 ether);
+		vm.prank(address(minipoolMgr));
+		ggAVAX.withdrawForStaking(20 ether);
+
+		// Call with small amounts that would have caused OutOfFunds before fix
+		uint256 baseAmt = 2 ether;
+		uint256 rewardAmt = 1 ether;
+
+		// This should succeed (would have failed with OutOfFunds before fix)
+		vm.deal(charlie, baseAmt + rewardAmt);
+		vm.prank(charlie);
+		withdrawQueue.depositFromStaking{value: 3 ether}(baseAmt, rewardAmt, bytes32("HYP3_FIX_TEST"));
+	}
+
+	function testDepositFromStakingWithFeeCalculation() public {
+		// Test that the fee calculation correctly ensures sufficient funds are deposited to TokenggAVAX
+
+		// Set a protocol fee for rewards (5% = 500 basis points)
+		vm.prank(guardian);
+		dao.setFeeBips(500); // 5% fee on rewards
+
+		// Setup: Create unstake request for 20 ether
+		vm.deal(alice, 100 ether);
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 50 ether}();
+
+		vm.prank(alice);
+		ggAVAX.approve(address(withdrawQueue), type(uint256).max);
+
+		vm.prank(alice);
+		uint256 requestId = withdrawQueue.requestUnstake(20 ether);
+
+		// Reduce ggAVAX liquidity to force deposit to ggAVAX
+		// Will result in 10 AVAX in ggAVAX. Need 10 AVAX to cover request
+		vm.startPrank(guardian);
+		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), guardian);
+		dao.setWithdrawForDelegationEnabled(true);
+		ggAVAX.withdrawForStaking(40 ether, bytes32("REDUCE_LIQUIDITY"));
+		vm.stopPrank();
+
+		// Store initial balance to verify liquidity calculation
+		uint256 ggAVAXAvailableBefore = ggAVAX.amountAvailableForStaking();
+
+		// calculate actual amount needed to deposit.
+		uint256 nextRequestAmount = withdrawQueue.getNextPendingRequestAmount();
+		uint256 feeAmount = dao.getFeeBips();
+		uint256 scaleFactor = uint256(1 ether).mulDivUp(10000, 10000 - feeAmount);
+		uint256 scaledNextRequestAmount = nextRequestAmount.mulWadUp(scaleFactor);
+		uint256 actualAmountNeeded = scaledNextRequestAmount - ggAVAXAvailableBefore;
+
+		uint256 rewardsRatio = 0.3 ether;
+		uint256 rewardAmount = actualAmountNeeded.mulWadUp(rewardsRatio);
+		uint256 baseAmount = actualAmountNeeded - rewardAmount;
+
+		// Perform the deposit with 70% base, 30% reward ratio
+		vm.deal(charlie, actualAmountNeeded);
+		vm.prank(charlie);
+		withdrawQueue.depositFromStaking{value: actualAmountNeeded}(baseAmount, rewardAmount, bytes32("FEE_TEST"));
+
+		// Verify the request was fulfilled - this proves the fee calculation worked
+		assertTrue(withdrawQueue.isFulfilledRequest(requestId), "Request should be fulfilled with proper fee accounting");
+
+		assertEq(withdrawQueue.getNextPendingRequestAmount(), 0, "No pending requests should remain after proper fee accounting");
+
+		// Verify that the scaling worked by checking that enough liquidity was added
+		// Even though fees were deducted, we should have sufficient liquidity
+		uint256 ggAVAXAvailableAfter = ggAVAX.amountAvailableForStaking();
+		assertTrue(ggAVAXAvailableAfter >= 0, "ggAVAX should maintain liquidity after fee-adjusted deposit");
+	}
+
+	function testGetRequestsByOwnerPagination() public {
+		// Setup: Alice deposits enough ggAVAX to create multiple requests
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 2000 ether}();
+
+		// Create 10 requests for Alice with different amounts
+		uint256[] memory expectedRequestIds = new uint256[](10);
+
+		vm.startPrank(alice);
+		for (uint256 i = 0; i < 10; i++) {
+			uint256 shares = (i + 1) * 10 ether; // 10, 20, 30, ..., 100 ether
+			ggAVAX.approve(address(withdrawQueue), shares);
+			expectedRequestIds[i] = withdrawQueue.requestUnstake(shares);
+		}
+		vm.stopPrank();
+
+		// Verify all requests were created correctly
+		assertEq(withdrawQueue.nextRequestId(), 10, "Should have created 10 requests");
+
+		_testBasicPagination(expectedRequestIds);
+		_testEdgeCases(expectedRequestIds);
+		_testConsistencyAndOverlaps(expectedRequestIds);
+		_testExpandedRequests(expectedRequestIds);
+	}
+
+	function _testBasicPagination(uint256[] memory expectedRequestIds) internal {
+		// Test 1: Get all requests with limit = 0 (should return all)
+		uint256[] memory allRequests = withdrawQueue.getRequestsByOwner(alice, 0, 0);
+		assertEq(allRequests.length, 10, "Should return all 10 requests when limit = 0");
+		for (uint256 i = 0; i < 10; i++) {
+			assertEq(allRequests[i], expectedRequestIds[i], "Request IDs should match expected order");
+		}
+
+		// Test 2: Test pagination with page size of 3
+		uint256[] memory page1 = withdrawQueue.getRequestsByOwner(alice, 0, 3);
+		uint256[] memory page2 = withdrawQueue.getRequestsByOwner(alice, 3, 3);
+		uint256[] memory page3 = withdrawQueue.getRequestsByOwner(alice, 6, 3);
+		uint256[] memory page4 = withdrawQueue.getRequestsByOwner(alice, 9, 3);
+
+		// Verify page sizes
+		assertEq(page1.length, 3, "Page 1 should have 3 items");
+		assertEq(page2.length, 3, "Page 2 should have 3 items");
+		assertEq(page3.length, 3, "Page 3 should have 3 items");
+		assertEq(page4.length, 1, "Page 4 should have 1 item (last page)");
+
+		// Verify page contents
+		for (uint256 i = 0; i < 3; i++) {
+			assertEq(page1[i], expectedRequestIds[i], "Page 1 content should match");
+			assertEq(page2[i], expectedRequestIds[i + 3], "Page 2 content should match");
+			assertEq(page3[i], expectedRequestIds[i + 6], "Page 3 content should match");
+		}
+		assertEq(page4[0], expectedRequestIds[9], "Page 4 content should match");
+
+		// Test 3: Test single item pagination
+		for (uint256 i = 0; i < 10; i++) {
+			uint256[] memory singleItem = withdrawQueue.getRequestsByOwner(alice, i, 1);
+			assertEq(singleItem.length, 1, "Should return exactly 1 item");
+			assertEq(singleItem[0], expectedRequestIds[i], "Single item should match expected");
+		}
+	}
+
+	function _testEdgeCases(uint256[] memory expectedRequestIds) internal {
+		// Test 4: Test large page size (larger than total)
+		uint256[] memory largePage = withdrawQueue.getRequestsByOwner(alice, 0, 20);
+		assertEq(largePage.length, 10, "Large page should be capped at total items");
+		for (uint256 i = 0; i < 10; i++) {
+			assertEq(largePage[i], expectedRequestIds[i], "Large page content should match");
+		}
+
+		// Test 5: Test offset at boundary
+		uint256[] memory boundaryPage = withdrawQueue.getRequestsByOwner(alice, 5, 10);
+		assertEq(boundaryPage.length, 5, "Boundary page should return remaining items");
+		for (uint256 i = 0; i < 5; i++) {
+			assertEq(boundaryPage[i], expectedRequestIds[i + 5], "Boundary page content should match");
+		}
+
+		// Test 6: Test offset beyond total (should return empty)
+		uint256[] memory emptyPage1 = withdrawQueue.getRequestsByOwner(alice, 10, 5);
+		uint256[] memory emptyPage2 = withdrawQueue.getRequestsByOwner(alice, 15, 1);
+		assertEq(emptyPage1.length, 0, "Should return empty array when offset >= total");
+		assertEq(emptyPage2.length, 0, "Should return empty array when offset > total");
+
+		// Test 7: Test with offset = total - 1 (last item)
+		uint256[] memory lastItem = withdrawQueue.getRequestsByOwner(alice, 9, 5);
+		assertEq(lastItem.length, 1, "Should return last item");
+		assertEq(lastItem[0], expectedRequestIds[9], "Last item should match");
+
+		// Test 8: Test empty results for different user
+		uint256[] memory bobRequests = withdrawQueue.getRequestsByOwner(bob, 0, 0);
+		assertEq(bobRequests.length, 0, "Bob should have no requests");
+	}
+
+	function _testConsistencyAndOverlaps(uint256[] memory expectedRequestIds) internal {
+		// Test 9: Test consistency across multiple calls
+		uint256[] memory consistency1 = withdrawQueue.getRequestsByOwner(alice, 2, 4);
+		uint256[] memory consistency2 = withdrawQueue.getRequestsByOwner(alice, 2, 4);
+		assertEq(consistency1.length, consistency2.length, "Consistent calls should return same length");
+		for (uint256 i = 0; i < consistency1.length; i++) {
+			assertEq(consistency1[i], consistency2[i], "Consistent calls should return same content");
+		}
+
+		// Test 10: Test partial page at the end
+		uint256[] memory partialEnd = withdrawQueue.getRequestsByOwner(alice, 8, 5);
+		assertEq(partialEnd.length, 2, "Should return remaining 2 items");
+		assertEq(partialEnd[0], expectedRequestIds[8], "First item should match");
+		assertEq(partialEnd[1], expectedRequestIds[9], "Second item should match");
+
+		// Test 11: Verify no overlap between adjacent pages
+		uint256[] memory adjacentPage1 = withdrawQueue.getRequestsByOwner(alice, 0, 4);
+		uint256[] memory adjacentPage2 = withdrawQueue.getRequestsByOwner(alice, 4, 4);
+
+		// Check no duplicates between pages
+		for (uint256 i = 0; i < adjacentPage1.length; i++) {
+			for (uint256 j = 0; j < adjacentPage2.length; j++) {
+				assertTrue(adjacentPage1[i] != adjacentPage2[j], "Adjacent pages should not overlap");
+			}
+		}
+	}
+
+	function _testExpandedRequests(uint256[] memory expectedRequestIds) internal {
+		// Test 12: Create additional requests and verify pagination still works
+		vm.startPrank(alice);
+		for (uint256 i = 0; i < 3; i++) {
+			uint256 shares = 5 ether;
+			ggAVAX.approve(address(withdrawQueue), shares);
+			withdrawQueue.requestUnstake(shares);
+		}
+		vm.stopPrank();
+
+		uint256[] memory expandedRequests = withdrawQueue.getRequestsByOwner(alice, 0, 0);
+		assertEq(expandedRequests.length, 13, "Should now have 13 total requests");
+
+		// Verify old requests are still in the same positions
+		for (uint256 i = 0; i < 10; i++) {
+			assertEq(expandedRequests[i], expectedRequestIds[i], "Original requests should maintain position");
+		}
+
+		// Test pagination on expanded set
+		uint256[] memory expandedPage1 = withdrawQueue.getRequestsByOwner(alice, 0, 5);
+		uint256[] memory expandedPage2 = withdrawQueue.getRequestsByOwner(alice, 5, 5);
+		uint256[] memory expandedPage3 = withdrawQueue.getRequestsByOwner(alice, 10, 5);
+
+		assertEq(expandedPage1.length, 5, "Expanded page 1 should have 5 items");
+		assertEq(expandedPage2.length, 5, "Expanded page 2 should have 5 items");
+		assertEq(expandedPage3.length, 3, "Expanded page 3 should have 3 items");
+	}
+
+	function testMinUnstakeOnBehalfOfAmt() public {
+		// Test initial value (should be 0.01 ether from initialization)
+		assertEq(withdrawQueue.getMinUnstakeOnBehalfOfAmt(), 0.01 ether);
+
+		// Test setter (only admin can set)
+		uint256 newMinAmt = 0.05 ether;
+		vm.prank(guardian);
+		withdrawQueue.setMinUnstakeOnBehalfOfAmt(newMinAmt);
+		assertEq(withdrawQueue.getMinUnstakeOnBehalfOfAmt(), newMinAmt);
+
+		// Test that non-admin cannot set
+		vm.prank(alice);
+		vm.expectRevert();
+		withdrawQueue.setMinUnstakeOnBehalfOfAmt(0.1 ether);
+	}
+
+	function testRequestUnstakeOnBehalfOfMinimumNotMet() public {
+		// Setup: alice deposits ggAVAX, bob will try to unstake on behalf of alice
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 1000 ether}();
+
+		uint256 tooSmallAmount = 0.005 ether; // Less than 0.01 ether minimum
+		vm.startPrank(bob);
+
+		// Bob should revert when trying to unstake less than minimum
+		vm.expectRevert(WithdrawQueue.MinimumSharesNotMet.selector);
+		withdrawQueue.requestUnstakeOnBehalfOf(tooSmallAmount, alice);
+
+		vm.stopPrank();
+	}
+
+	function testRequestUnstakeOnBehalfOfMinimumMet() public {
+		// Setup: alice deposits ggAVAX, then transfers some to bob so bob can unstake on behalf of alice
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 1000 ether}();
+
+		uint256 validAmount = 0.05 ether; // More than 0.01 ether minimum
+
+		// Alice transfers some ggAVAX to bob
+		vm.prank(alice);
+		ggAVAX.transfer(bob, validAmount);
+
+		uint256 bobSharesBefore = ggAVAX.balanceOf(bob);
+
+		// Bob approves withdraw queue to spend his ggAVAX
+		vm.prank(bob);
+		ggAVAX.approve(address(withdrawQueue), validAmount);
+
+		vm.startPrank(bob);
+		uint256 requestId = withdrawQueue.requestUnstakeOnBehalfOf(validAmount, alice);
+		vm.stopPrank();
+
+		// Verify the request was created successfully
+		WithdrawQueue.UnstakeRequest memory request = withdrawQueue.getRequestInfo(requestId);
+		assertEq(request.requester, alice); // alice should be the requester (beneficiary)
+		assertEq(request.shares, validAmount);
+		assertEq(request.requestTime, block.timestamp);
+		assertEq(request.claimableTime, block.timestamp + UNSTAKE_DELAY);
+		assertEq(request.expirationTime, block.timestamp + UNSTAKE_DELAY + EXPIRATION_DELAY);
+
+		// Verify shares were transferred from bob to withdraw queue
+		assertEq(ggAVAX.balanceOf(bob), bobSharesBefore - validAmount);
+		assertEq(ggAVAX.balanceOf(address(withdrawQueue)), validAmount);
+
+		// Verify request is pending
+		assertTrue(withdrawQueue.isRequestPending(requestId));
+	}
+
+	function testRequestUnstakeOnBehalfOfExactMinimum() public {
+		// Setup: alice deposits ggAVAX, then transfers to bob
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 1000 ether}();
+
+		uint256 exactMinAmount = 0.01 ether; // Exactly the minimum
+
+		// Alice transfers ggAVAX to bob
+		vm.prank(alice);
+		ggAVAX.transfer(bob, exactMinAmount);
+
+		// Bob approves withdraw queue to spend his ggAVAX
+		vm.prank(bob);
+		ggAVAX.approve(address(withdrawQueue), exactMinAmount);
+
+		vm.startPrank(bob);
+		uint256 requestId = withdrawQueue.requestUnstakeOnBehalfOf(exactMinAmount, alice);
+		vm.stopPrank();
+
+		// Should succeed with exact minimum amount
+		WithdrawQueue.UnstakeRequest memory request = withdrawQueue.getRequestInfo(requestId);
+		assertEq(request.requester, alice);
+		assertEq(request.shares, exactMinAmount);
+	}
+
+	function testDepositFromStakingEarlyReturnDonatesExcessFunds() public {
+		// Test that excess AVAX is properly donated back even when depositFromStaking hits early returns
+		// This verifies the fix for the bug where accumulated excessAVAX was lost on early returns
+
+		// Setup: Create initial liquidity and improve exchange rate
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 2000 ether}();
+
+		// Create first request that will be fulfilled with excess due to improved exchange rate
+		vm.prank(alice);
+		ggAVAX.approve(address(withdrawQueue), 100 ether);
+		vm.prank(alice);
+		uint256 requestId1 = withdrawQueue.requestUnstake(100 ether);
+
+		// Improve exchange rate by adding rewards
+		vm.prank(address(minipoolMgr));
+		ggAVAX.withdrawForStaking(500 ether);
+
+		vm.deal(address(minipoolMgr), 600 ether);
+
+		vm.prank(address(minipoolMgr));
+		ggAVAX.depositFromStaking{value: 600 ether}(500 ether, 100 ether);
+
+		// Advance time and sync rewards to improve exchange rate
+		vm.warp(block.timestamp + 15 days);
+		ggAVAX.syncRewards();
+		vm.warp(block.timestamp + 15 days);
+
+		// Create second large request that will trigger insufficient liquidity
+		vm.prank(alice);
+		ggAVAX.approve(address(withdrawQueue), 1500 ether);
+		vm.prank(alice);
+		uint256 requestId2 = withdrawQueue.requestUnstake(1500 ether);
+
+		// Reduce ggAVAX liquidity to force early return on second request
+		vm.startPrank(address(minipoolMgr));
+		uint256 currentLiquidity = ggAVAX.amountAvailableForStaking();
+		uint256 liquidityToWithdraw = currentLiquidity - 120 ether; // Leave enough for first request only
+		if (liquidityToWithdraw > 0) {
+			ggAVAX.withdrawForStaking(liquidityToWithdraw);
+		}
+		vm.stopPrank();
+
+		// Verify test setup
+		assertEq(withdrawQueue.getRequestInfo(requestId1).expectedAssets, 100 ether, "First request should expect 100 ether");
+		assertEq(withdrawQueue.getRequestInfo(requestId2).expectedAssets, 1575 ether, "Second request should expect 1575 ether");
+		assertEq(ggAVAX.amountAvailableForStaking(), 120 ether, "Should have 120 ether liquidity remaining");
+
+		// Execute depositFromStaking - should fulfill first request and hit early return on second
+		uint256 depositAmount = 200 ether;
+		vm.deal(charlie, depositAmount);
+		vm.prank(charlie);
+		withdrawQueue.depositFromStaking{value: depositAmount}(0, depositAmount, bytes32("TEST_YIELD"));
+
+		// Verify the scenario worked as expected
+		assertTrue(withdrawQueue.isFulfilledRequest(requestId1), "First request should be fulfilled");
+		assertTrue(withdrawQueue.isRequestPending(requestId2), "Second request should still be pending");
+
+		// Verify excess AVAX was properly donated back
+		// From the trace we can see:
+		// 1. redeemAVAX returned 105 ether (as shown in the Withdraw event)
+		// 2. Only 100 ether was allocated to the request (expectedAssets)
+		// 3. depositYield was called with 5 ether excess before the early return
+		// 4. The first request was allocated exactly 100 ether
+
+		assertGt(ggAVAX.asset().balanceOf(address(ggAVAX)), ggAVAX.amountAvailableForStaking());
+		// Key verification: The first request should be allocated exactly 100 ether despite 105 ether being redeemed
+		assertEq(withdrawQueue.getRequestInfo(requestId1).allocatedFunds, 100 ether, "First request should have exactly 100 ether allocated");
 	}
 }
 

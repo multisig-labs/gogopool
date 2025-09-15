@@ -35,7 +35,9 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	error InsufficientShares();
 	error WithdrawAmountTooLarge();
 	error WithdrawForStakingDisabled();
+	error CannotGrantDefaultAdminRole();
 	error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
+	error InsufficientLiquidity();
 
 	event NewRewardsCycle(uint256 indexed cycleEnd, uint256 rewardsAmt);
 	event DepositedFromStaking(bytes32 indexed source, address indexed caller, uint256 baseAmt, uint256 rewardsAmt);
@@ -212,69 +214,26 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	/// @notice Accepts AVAX deposit from a minipool. Expects the base amount and rewards earned from staking
 	/// @param baseAmt The amount of liquid staker AVAX used to create a minipool
 	/// @param rewardAmt The rewards amount (in AVAX) earned from staking
-	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt) public payable onlySpecificRegisteredContract("MinipoolManager", msg.sender) {
-		ProtocolDAO protocolDAO = ProtocolDAO(getContractAddress("ProtocolDAO"));
-		Vault vault = Vault(getContractAddress("Vault"));
-
-		uint256 totalAmt = msg.value;
-		uint256 feeAmount = rewardAmt.mulDivDown(protocolDAO.getFeeBips(), 10000);
-		rewardAmt -= feeAmount;
-		if (totalAmt != (baseAmt + rewardAmt + feeAmount) || baseAmt > stakingTotalAssets) {
-			revert InvalidStakingDeposit();
-		}
-
-		if (feeAmount > 0) {
-			vault.depositAVAX{value: feeAmount}();
-			vault.transferAVAX("ClaimProtocolDAO", feeAmount);
-			emit FeeCollected(MINIPOOL_SOURCE, feeAmount);
-		}
-
-		stakingTotalAssets -= baseAmt;
-		IWAVAX(address(asset)).deposit{value: totalAmt - feeAmount}();
-
-		emit DepositedFromStaking(MINIPOOL_SOURCE, msg.sender, baseAmt, rewardAmt);
+	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt) external payable onlySpecificRegisteredContract("MinipoolManager", msg.sender) {
+		_depositFromStaking(baseAmt, rewardAmt, MINIPOOL_SOURCE);
 	}
 
 	/// @notice Allows users to deposit additional yield from activities such as MEV
 	/// @param baseAmt The base amount being returned from staking/delegation
 	/// @param rewardAmt The reward amount from yield activities
 	/// @param source The source of the additional yield (i.e. MEV)
-	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt, bytes32 source) public payable onlyRole(STAKER_ROLE) {
-		ProtocolDAO protocolDAO = ProtocolDAO(getContractAddress("ProtocolDAO"));
-		Vault vault = Vault(getContractAddress("Vault"));
-
-		uint256 totalAmt = msg.value;
-		uint256 feeAmt = rewardAmt.mulDivDown(protocolDAO.getFeeBips(), 10000);
-		rewardAmt -= feeAmt;
-
-		if (totalAmt != (baseAmt + rewardAmt + feeAmt) || baseAmt > stakingTotalAssets) {
-			revert InvalidStakingDeposit();
-		}
-
-		if (feeAmt > 0) {
-			vault.depositAVAX{value: feeAmt}();
-			vault.transferAVAX("ClaimProtocolDAO", feeAmt);
-			emit FeeCollected(source, feeAmt);
-		}
-
-		stakingTotalAssets -= baseAmt;
-		IWAVAX(address(asset)).deposit{value: totalAmt - feeAmt}();
-		emit DepositedFromStaking(source, msg.sender, baseAmt, rewardAmt);
+	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt, bytes32 source) external payable onlyRole(STAKER_ROLE) {
+		_depositFromStaking(baseAmt, rewardAmt, source);
 	}
 
 	/// @notice Allows anyone to deposit yield to the contract
 	/// @param source The source of the yield (i.e. MEV)
-	function depositYield(bytes32 source) public payable {
+	function depositYield(bytes32 source) external payable {
 		ProtocolDAO protocolDAO = ProtocolDAO(getContractAddress("ProtocolDAO"));
 		uint256 totalAmt = msg.value;
 		uint256 feeAmt = totalAmt.mulDivDown(protocolDAO.getFeeBips(), 10000);
 
-		Vault vault = Vault(getContractAddress("Vault"));
-		if (feeAmt > 0) {
-			vault.depositAVAX{value: feeAmt}();
-			vault.transferAVAX("ClaimProtocolDAO", feeAmt);
-			emit FeeCollected(source, feeAmt);
-		}
+		_collectProtocolFee(feeAmt, source);
 
 		IWAVAX(address(asset)).deposit{value: totalAmt - feeAmt}();
 		emit DepositedAdditionalYield(source, msg.sender, totalAmt, feeAmt);
@@ -316,8 +275,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 			revert WithdrawForStakingDisabled();
 		}
 
-		TokenggAVAX ggAVAX = TokenggAVAX(payable(getContractAddress("TokenggAVAX")));
-		if (assets > ggAVAX.amountAvailableForStaking()) {
+		if (assets > amountAvailableForStaking()) {
 			revert WithdrawAmountTooLarge();
 		}
 
@@ -365,6 +323,12 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 		if ((assets = previewRedeem(shares)) == 0) {
 			revert ZeroAssets();
 		}
+
+		// Check liquidity before attempting withdrawal to avoid gas-related failures being misinterpreted
+		if (IWAVAX(address(asset)).balanceOf(address(this)) < assets) {
+			revert InsufficientLiquidity();
+		}
+
 		beforeWithdraw(assets, shares);
 		_burn(msg.sender, shares);
 
@@ -395,14 +359,17 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	/// @notice Grant a role to an account - only admin can grant
 	/// @param role The role identifier
 	/// @param account The account to grant the role to
-	function grantRole(bytes32 role, address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
+	function grantRole(bytes32 role, address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+		if (role == DEFAULT_ADMIN_ROLE) {
+			revert CannotGrantDefaultAdminRole();
+		}
 		_grantRole(role, account);
 	}
 
 	/// @notice Revoke a role from an account - only admin can revoke
 	/// @param role The role identifier
 	/// @param account The account to revoke the role from
-	function revokeRole(bytes32 role, address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
+	function revokeRole(bytes32 role, address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
 		// Prevent admin from revoking their own admin role without a pending admin
 		if (role == DEFAULT_ADMIN_ROLE && account == msg.sender && _pendingAdmin == address(0)) {
 			revert("Cannot revoke admin role without pending admin");
@@ -412,7 +379,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 
 	/// @notice Initiate admin transfer to a new address
 	/// @param newAdmin The address to transfer admin rights to
-	function transferAdmin(address newAdmin) public onlyRole(DEFAULT_ADMIN_ROLE) {
+	function transferAdmin(address newAdmin) external onlyRole(DEFAULT_ADMIN_ROLE) {
 		require(newAdmin != address(0), "New admin cannot be zero address");
 		require(newAdmin != msg.sender, "Cannot transfer to self");
 
@@ -421,7 +388,7 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	}
 
 	/// @notice Accept admin transfer - only pending admin can call
-	function acceptAdmin() public {
+	function acceptAdmin() external {
 		require(_pendingAdmin != address(0), "No pending admin transfer");
 		require(msg.sender == _pendingAdmin, "Only pending admin can accept");
 
@@ -436,19 +403,13 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	}
 
 	/// @notice Cancel pending admin transfer - only current admin can call
-	function cancelAdminTransfer() public onlyRole(DEFAULT_ADMIN_ROLE) {
+	function cancelAdminTransfer() external onlyRole(DEFAULT_ADMIN_ROLE) {
 		require(_pendingAdmin != address(0), "No pending admin transfer");
 
 		address canceledPendingAdmin = _pendingAdmin;
 		_pendingAdmin = address(0);
 
 		emit AdminTransferCanceled(msg.sender, canceledPendingAdmin);
-	}
-
-	/// @notice Renounce admin role - only if there's a pending admin
-	function renounceAdmin() public onlyRole(DEFAULT_ADMIN_ROLE) {
-		require(_pendingAdmin != address(0), "Must have pending admin to renounce");
-		_revokeRole(DEFAULT_ADMIN_ROLE, msg.sender);
 	}
 
 	/// @notice Max assets an owner can deposit
@@ -499,13 +460,13 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 
 	/// @notice Get the current admin address
 	/// @return address The current admin address
-	function admin() public view returns (address) {
+	function admin() external view returns (address) {
 		return _getAdmin();
 	}
 
 	/// @notice Get the pending admin address
 	/// @return address The pending admin address (zero if none)
-	function pendingAdmin() public view returns (address) {
+	function pendingAdmin() external view returns (address) {
 		return _pendingAdmin;
 	}
 
@@ -521,6 +482,42 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	/// @return uint256 Amount of AVAX required
 	function previewMint(uint256 shares) public view override whenTokenNotPaused(shares) returns (uint256) {
 		return super.previewMint(shares);
+	}
+
+	/// @dev Helper function to handle protocol fee collection for yield/deposit functions
+	/// @param feeAmount The amount of AVAX to collect as fees
+	/// @param source The source of the deposit (for event emission)
+	/// @return The amount of AVAX remaining after fee collection
+	function _collectProtocolFee(uint256 feeAmount, bytes32 source) internal returns (uint256) {
+		if (feeAmount > 0) {
+			Vault vault = Vault(getContractAddress("Vault"));
+			vault.depositAVAX{value: feeAmount}();
+			vault.transferAVAX("ClaimProtocolDAO", feeAmount);
+			emit FeeCollected(source, feeAmount);
+		}
+		return feeAmount;
+	}
+
+	/// @dev Internal function implementing the core deposit from staking logic
+	/// @param baseAmt The base amount being returned from staking/delegation
+	/// @param rewardAmt The reward amount from yield activities
+	/// @param source The source of the deposit (for event emission)
+	function _depositFromStaking(uint256 baseAmt, uint256 rewardAmt, bytes32 source) internal {
+		ProtocolDAO protocolDAO = ProtocolDAO(getContractAddress("ProtocolDAO"));
+
+		uint256 totalAmt = msg.value;
+		uint256 feeAmt = rewardAmt.mulDivDown(protocolDAO.getFeeBips(), 10000);
+		rewardAmt -= feeAmt;
+
+		if (totalAmt != (baseAmt + rewardAmt + feeAmt) || baseAmt > stakingTotalAssets) {
+			revert InvalidStakingDeposit();
+		}
+
+		_collectProtocolFee(feeAmt, source);
+
+		stakingTotalAssets -= baseAmt;
+		IWAVAX(address(asset)).deposit{value: totalAmt - feeAmt}();
+		emit DepositedFromStaking(source, msg.sender, baseAmt, rewardAmt);
 	}
 
 	/// @notice Function prior to a withdraw
