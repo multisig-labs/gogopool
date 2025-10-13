@@ -43,3 +43,7 @@ deployed/*.json
 broadcast/**/*.json
 !broadcast/*/43113/*
 !broadcast/*/43114/*
+
+# crush
+.crush
+crush.json
