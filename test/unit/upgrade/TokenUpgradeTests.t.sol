@@ -116,6 +116,7 @@ contract TokenUpgradeTests is BaseTest {
 		);
 
 		TokenggAVAX proxy = TokenggAVAX(payable(address(transparentProxy)));
+		proxy.grantRole(proxy.SYNC_REWARDS_ROLE(), guardian);
 
 		// Xfer admin of proxy to guardian from deployer
 		proxyAdmin.transferOwnership(guardian);
@@ -125,6 +126,8 @@ contract TokenUpgradeTests is BaseTest {
 		address alice = getActorWithTokens("alice", 1000 ether, 0 ether);
 		vm.prank(alice);
 		wavax.transfer(address(proxy), 1000 ether);
+
+		vm.prank(guardian);
 		proxy.syncRewards();
 
 		uint256 oldLastSync = proxy.lastSync();
@@ -159,9 +162,11 @@ contract TokenUpgradeTests is BaseTest {
 		TokenggAVAX proxy = TokenggAVAX(payable(address(transparentProxy)));
 
 		// Xfer admin of proxy to guardian from deployer
+		proxy.grantRole(proxy.SYNC_REWARDS_ROLE(), guardian);
 		proxyAdmin.transferOwnership(guardian);
 		vm.stopPrank();
 
+		vm.prank(guardian);
 		proxy.syncRewards();
 		uint256 oldLastSync = proxy.lastSync();
 		bytes32 oldDomainSeparator = proxy.DOMAIN_SEPARATOR();
@@ -467,6 +472,10 @@ contract TokenUpgradeTests is BaseTest {
 		// Execute the transaction (anyone can execute after delay)
 		timelock.executeTransaction(transactionId);
 
+		vm.startPrank(guardian);
+		tokenProxy.grantRole(tokenProxy.SYNC_REWARDS_ROLE(), guardian);
+		vm.stopPrank();
+
 		// Verify successful upgrade to V3
 		assertEq(tokenProxy.name(), "Hypha Staked AVAX");
 		assertEq(tokenProxy.symbol(), "stAVAX");
@@ -499,6 +508,7 @@ contract TokenUpgradeTests is BaseTest {
 		assertEq(alice.balance, 25 ether);
 
 		// Test rewards functionality
+		vm.prank(guardian);
 		tokenProxy.syncRewards();
 		assertTrue(tokenProxy.lastSync() > 0);
 

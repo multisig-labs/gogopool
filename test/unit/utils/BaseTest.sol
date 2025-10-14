@@ -146,6 +146,10 @@ abstract contract BaseTest is Test {
 
 		// Grant WITHDRAW_QUEUE_ROLE to this test contract for direct withdrawal function tests
 		ggAVAX.grantRole(ggAVAX.WITHDRAW_QUEUE_ROLE(), address(this));
+
+		// Grant SYNC_REWARDS_ROLE to this test contract for syncRewards function tests
+		ggAVAX.grantRole(ggAVAX.SYNC_REWARDS_ROLE(), address(this));
+		ggAVAX.grantRole(ggAVAX.SYNC_REWARDS_ROLE(), guardian);
 		vm.stopPrank();
 
 		// Initialize the rewards cycle

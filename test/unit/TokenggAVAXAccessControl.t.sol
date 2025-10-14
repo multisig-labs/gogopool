@@ -12,9 +12,11 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 	address public user1;
 	address public user2;
 	address public newAdmin;
+	address public testGuardian;
 
 	bytes32 public STAKER_ROLE;
 	bytes32 public WITHDRAW_QUEUE_ROLE;
+	bytes32 public SYNC_REWARDS_ROLE;
 	bytes32 public DEFAULT_ADMIN_ROLE;
 
 	function setUp() public override {
@@ -39,7 +41,20 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 
 		STAKER_ROLE = token.STAKER_ROLE();
 		WITHDRAW_QUEUE_ROLE = token.WITHDRAW_QUEUE_ROLE();
+		SYNC_REWARDS_ROLE = token.SYNC_REWARDS_ROLE();
 		DEFAULT_ADMIN_ROLE = token.DEFAULT_ADMIN_ROLE();
+
+		// Create a separate guardian for testing guardianWithdrawWAVAX
+		// This avoids the "admin cannot fallback to proxy target" error
+		testGuardian = getActor("testGuardian");
+
+		// Set the testGuardian as the guardian in storage for our tests
+		vm.prank(guardian);
+		store.setGuardian(testGuardian);
+
+		// Confirm the guardian change
+		vm.prank(testGuardian);
+		store.confirmGuardian();
 	}
 
 	// =============================================================================
@@ -62,6 +77,15 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 
 		assertTrue(token.hasRole(WITHDRAW_QUEUE_ROLE, user1));
 		assertFalse(token.hasRole(WITHDRAW_QUEUE_ROLE, user2));
+	}
+
+	function testGrantSyncRewardsRole() public {
+		// Admin can grant SYNC_REWARDS_ROLE
+		vm.prank(admin);
+		token.grantRole(SYNC_REWARDS_ROLE, user1);
+
+		assertTrue(token.hasRole(SYNC_REWARDS_ROLE, user1));
+		assertFalse(token.hasRole(SYNC_REWARDS_ROLE, user2));
 	}
 
 	function testGrantRoleEmitsEvent() public {
@@ -87,11 +111,7 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 
 	function testGrantRoleOnlyAdmin() public {
 		// Non-admin cannot grant roles
-		vm.expectRevert(abi.encodeWithSelector(
-			TokenggAVAX.AccessControlUnauthorizedAccount.selector,
-			user1,
-			DEFAULT_ADMIN_ROLE
-		));
+		vm.expectRevert(abi.encodeWithSelector(TokenggAVAX.AccessControlUnauthorizedAccount.selector, user1, DEFAULT_ADMIN_ROLE));
 
 		vm.prank(user1);
 		token.grantRole(STAKER_ROLE, user2);
@@ -141,11 +161,7 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 		token.grantRole(STAKER_ROLE, user1);
 
 		// Non-admin cannot revoke roles
-		vm.expectRevert(abi.encodeWithSelector(
-			TokenggAVAX.AccessControlUnauthorizedAccount.selector,
-			user2,
-			DEFAULT_ADMIN_ROLE
-		));
+		vm.expectRevert(abi.encodeWithSelector(TokenggAVAX.AccessControlUnauthorizedAccount.selector, user2, DEFAULT_ADMIN_ROLE));
 
 		vm.prank(user2);
 		token.revokeRole(STAKER_ROLE, user1);
@@ -211,11 +227,7 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 	}
 
 	function testTransferAdminOnlyAdmin() public {
-		vm.expectRevert(abi.encodeWithSelector(
-			TokenggAVAX.AccessControlUnauthorizedAccount.selector,
-			user1,
-			DEFAULT_ADMIN_ROLE
-		));
+		vm.expectRevert(abi.encodeWithSelector(TokenggAVAX.AccessControlUnauthorizedAccount.selector, user1, DEFAULT_ADMIN_ROLE));
 
 		vm.prank(user1);
 		token.transferAdmin(newAdmin);
@@ -292,11 +304,7 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 		token.transferAdmin(newAdmin);
 
 		// Only admin can cancel
-		vm.expectRevert(abi.encodeWithSelector(
-			TokenggAVAX.AccessControlUnauthorizedAccount.selector,
-			user1,
-			DEFAULT_ADMIN_ROLE
-		));
+		vm.expectRevert(abi.encodeWithSelector(TokenggAVAX.AccessControlUnauthorizedAccount.selector, user1, DEFAULT_ADMIN_ROLE));
 
 		vm.prank(user1);
 		token.cancelAdminTransfer();
@@ -324,15 +332,11 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 
 	function testWithdrawForStakingRequiresDelegatorRole() public {
 		// Enable delegation withdrawals
-		vm.prank(guardian);
+		vm.prank(testGuardian);
 		dao.setWithdrawForDelegationEnabled(true);
 
 		// Should revert without role
-		vm.expectRevert(abi.encodeWithSelector(
-			TokenggAVAX.AccessControlUnauthorizedAccount.selector,
-			user1,
-			STAKER_ROLE
-		));
+		vm.expectRevert(abi.encodeWithSelector(TokenggAVAX.AccessControlUnauthorizedAccount.selector, user1, STAKER_ROLE));
 
 		vm.prank(user1);
 		token.withdrawForStaking(1 ether, bytes32("DELEGATION"));
@@ -340,7 +344,7 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 
 	function testWithdrawForStakingWorksWithRole() public {
 		// Enable delegation withdrawals
-		vm.prank(guardian);
+		vm.prank(testGuardian);
 		dao.setWithdrawForDelegationEnabled(true);
 
 		// Grant role and add some funds
@@ -361,11 +365,7 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 
 	function testWithdrawAVAXRequiresWithdrawQueueRole() public {
 		// Should revert without role
-		vm.expectRevert(abi.encodeWithSelector(
-			TokenggAVAX.AccessControlUnauthorizedAccount.selector,
-			user1,
-			token.WITHDRAW_QUEUE_ROLE()
-		));
+		vm.expectRevert(abi.encodeWithSelector(TokenggAVAX.AccessControlUnauthorizedAccount.selector, user1, token.WITHDRAW_QUEUE_ROLE()));
 
 		vm.prank(user1);
 		token.withdrawAVAX(1 ether);
@@ -373,14 +373,38 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 
 	function testRedeemAVAXRequiresWithdrawQueueRole() public {
 		// Should revert without role
-		vm.expectRevert(abi.encodeWithSelector(
-			TokenggAVAX.AccessControlUnauthorizedAccount.selector,
-			user1,
-			token.WITHDRAW_QUEUE_ROLE()
-		));
+		vm.expectRevert(abi.encodeWithSelector(TokenggAVAX.AccessControlUnauthorizedAccount.selector, user1, token.WITHDRAW_QUEUE_ROLE()));
 
 		vm.prank(user1);
 		token.redeemAVAX(1 ether);
+	}
+
+	function testSyncRewardsRequiresSyncRewardsRole() public {
+		// Should revert without role
+		vm.expectRevert(abi.encodeWithSelector(TokenggAVAX.AccessControlUnauthorizedAccount.selector, user1, SYNC_REWARDS_ROLE));
+
+		vm.prank(user1);
+		token.syncRewards();
+	}
+
+	function testSyncRewardsWorksWithRole() public {
+		// Grant role to user1
+		vm.prank(admin);
+		token.grantRole(SYNC_REWARDS_ROLE, user1);
+
+		// Add some funds to the token contract to make syncRewards work
+		address depositor = getActor("depositor");
+		vm.deal(depositor, 10 ether);
+		vm.prank(depositor);
+		token.depositAVAX{value: 10 ether}();
+
+		// Should work with role - but first we need to advance time to allow sync
+		// Set up a rewards cycle that has ended
+		vm.warp(block.timestamp + 15 days); // Advance past the 14-day cycle
+
+		// Should work with role
+		vm.prank(user1);
+		token.syncRewards();
 	}
 
 	// =============================================================================
@@ -416,11 +440,7 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 		assertTrue(token.hasRole(STAKER_ROLE, user2));
 
 		// 6. Old admin cannot perform admin actions
-		vm.expectRevert(abi.encodeWithSelector(
-			TokenggAVAX.AccessControlUnauthorizedAccount.selector,
-			admin,
-			DEFAULT_ADMIN_ROLE
-		));
+		vm.expectRevert(abi.encodeWithSelector(TokenggAVAX.AccessControlUnauthorizedAccount.selector, admin, DEFAULT_ADMIN_ROLE));
 
 		vm.prank(admin);
 		token.revokeRole(STAKER_ROLE, user1);
@@ -483,7 +503,7 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 	function testRenounceAdminFunctionRemoved() public {
 		// This test verifies the fix for HYP-2 issue #2:
 		// renounceAdmin() function has been removed to prevent zero admin scenarios
-		
+
 		// Initial state: admin is the default admin
 		assertTrue(token.hasRole(DEFAULT_ADMIN_ROLE, admin));
 		assertEq(token.admin(), admin);
@@ -506,14 +526,14 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 		// - renounceAdmin() function no longer exists (would cause compilation error if called)
 		// - Current admin retains admin role until new admin accepts
 		// - Admin can cancel transfer if needed
-		
+
 		// Uncommenting the line below would cause a compilation error:
 		// token.renounceAdmin(); // <- This function no longer exists!
-		
+
 		// Admin still has admin role during pending transfer (no zero admin state possible)
 		assertTrue(token.hasRole(DEFAULT_ADMIN_ROLE, admin));
 		assertEq(token.admin(), admin); // Admin still the admin
-		
+
 		// Admin can still perform admin functions during pending transfer
 		vm.startPrank(admin);
 		token.grantRole(STAKER_ROLE, user1);
@@ -524,7 +544,7 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 		vm.startPrank(admin);
 		token.cancelAdminTransfer();
 		vm.stopPrank();
-		
+
 		// Verify transfer was canceled - still have admin, no zero admin state
 		assertEq(token.pendingAdmin(), address(0));
 		assertTrue(token.hasRole(DEFAULT_ADMIN_ROLE, admin));
@@ -579,42 +599,42 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 		// Multiple transfers should overwrite the pending admin
 		address firstCandidate = getActor("firstCandidate");
 		address secondCandidate = getActor("secondCandidate");
-		
+
 		vm.startPrank(admin);
 		token.transferAdmin(firstCandidate);
 		assertEq(token.pendingAdmin(), firstCandidate);
-		
+
 		// Transfer to second candidate should overwrite
 		token.transferAdmin(secondCandidate);
 		assertEq(token.pendingAdmin(), secondCandidate);
 		vm.stopPrank();
-		
+
 		// First candidate can't accept anymore
 		vm.startPrank(firstCandidate);
 		vm.expectRevert("Only pending admin can accept");
 		token.acceptAdmin();
 		vm.stopPrank();
-		
+
 		// Second candidate can accept
 		vm.startPrank(secondCandidate);
 		token.acceptAdmin();
 		vm.stopPrank();
-		
+
 		assertEq(token.admin(), secondCandidate);
 	}
 
 	function testAdminTransferEventsEmitted() public {
 		// Test that proper events are emitted during admin transfer process
 		address newAdminCandidate = getActor("newAdminCandidate");
-		
+
 		// Test AdminTransferInitiated event
 		vm.expectEmit(true, true, true, true);
 		emit AdminTransferInitiated(admin, newAdminCandidate);
-		
+
 		vm.startPrank(admin);
 		token.transferAdmin(newAdminCandidate);
 		vm.stopPrank();
-		
+
 		// Test AdminTransferCompleted event and role events
 		vm.expectEmit(true, true, true, true);
 		emit RoleRevoked(DEFAULT_ADMIN_ROLE, admin, newAdminCandidate);
@@ -622,7 +642,7 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 		emit RoleGranted(DEFAULT_ADMIN_ROLE, newAdminCandidate, newAdminCandidate);
 		vm.expectEmit(true, true, true, true);
 		emit AdminTransferCompleted(admin, newAdminCandidate);
-		
+
 		vm.startPrank(newAdminCandidate);
 		token.acceptAdmin();
 		vm.stopPrank();
@@ -630,14 +650,14 @@ contract TokenggAVAXAccessControlTest is BaseTest {
 
 	function testAdminTransferCancelEmitsEvent() public {
 		address newAdminCandidate = getActor("newAdminCandidate");
-		
+
 		vm.startPrank(admin);
 		token.transferAdmin(newAdminCandidate);
-		
+
 		// Test AdminTransferCanceled event
 		vm.expectEmit(true, true, true, true);
 		emit AdminTransferCanceled(admin, newAdminCandidate);
-		
+
 		token.cancelAdminTransfer();
 		vm.stopPrank();
 	}

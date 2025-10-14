@@ -227,8 +227,10 @@ contract RewardsPoolTest is BaseTest {
 	function testZeroMultisigRewards() public {
 		// Rialto is default enabled
 		vm.prank(guardian);
+		ocyticus.addDefender(guardian);
 
 		// disable all so count will be 0
+		vm.prank(guardian);
 		ocyticus.disableAllMultisigs();
 
 		skip(dao.getRewardsCycleSeconds());

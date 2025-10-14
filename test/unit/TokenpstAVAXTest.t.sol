@@ -128,6 +128,10 @@ contract TokenpstAVAXTest is BaseTest {
 
 	function testStripYieldDefault() public {
 		// we have to create a ggAVAX holder I think
+		vm.startPrank(guardian);
+		ggAVAX.grantRole(ggAVAX.SYNC_REWARDS_ROLE(), bob);
+		vm.stopPrank();
+
 		uint256 ggAVAXDeposit = 1 ether;
 		vm.prank(bob);
 		ggAVAX.depositAVAX{value: ggAVAXDeposit}();

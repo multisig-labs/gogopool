@@ -5,6 +5,7 @@ import "./utils/BaseTest.sol";
 import {WithdrawQueue} from "../../contracts/contract/WithdrawQueue.sol";
 import {stdError} from "forge-std/StdError.sol";
 import {console2} from "forge-std/console2.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 contract WithdrawQueueTest is BaseTest {
 	using FixedPointMathLib for uint256;
@@ -25,6 +26,8 @@ contract WithdrawQueueTest is BaseTest {
 	event ExcessSharesBurnt(uint256 indexed requestId, uint256 sharesBurnt);
 	event BatchExpiredFundsReclaimed(address indexed requester, uint256 totalAmount, uint256 requestsProcessed);
 	event ContractInitialized(address indexed tokenggAVAX, uint48 unstakeDelay, uint48 expirationDelay);
+	event ContractPaused(address indexed pauser);
+	event ContractUnpaused(address indexed unpauser);
 
 	function setUp() public override {
 		super.setUp();
@@ -53,6 +56,7 @@ contract WithdrawQueueTest is BaseTest {
 		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), address(withdrawQueue));
 		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), charlie);
 		withdrawQueue.grantRole(withdrawQueue.DEPOSITOR_ROLE(), charlie);
+		withdrawQueue.grantRole(withdrawQueue.PAUSER_ROLE(), guardian);
 
 		// Set max requests per staking deposit for testing
 		withdrawQueue.setMaxRequestsPerStakingDeposit(25);
@@ -256,6 +260,8 @@ contract WithdrawQueueTest is BaseTest {
 		vm.prank(address(rialto));
 		rialto.withdrawForDelegation(withdrawAmount, randAddress());
 
+		uint256 ggAVAXWAVAXBefore = ggAVAX.asset().balanceOf(address(ggAVAX));
+
 		// Create a large request that won't be fulfilled
 		uint256 sharesToUnstake = 500 ether;
 		vm.startPrank(alice);
@@ -272,7 +278,10 @@ contract WithdrawQueueTest is BaseTest {
 		// Request should still be pending since not enough available AVAX
 		assertEq(withdrawQueue.isRequestPending(requestId), true);
 		assertEq(withdrawQueue.isFulfilledRequest(requestId), false);
-		assertEq(address(withdrawQueue).balance, yieldAmount);
+
+		//  Should have no unallocated AVAX
+		assertEq(address(withdrawQueue).balance, withdrawQueue.totalAllocatedFunds());
+		assertEq(ggAVAX.asset().balanceOf(address(ggAVAX)), ggAVAXWAVAXBefore + yieldAmount);
 	}
 
 	function testReceiveAVAXReverts() public {
@@ -1558,8 +1567,8 @@ contract WithdrawQueueTest is BaseTest {
 
 		// ggAVAX should have received exactly the amount needed for first request
 		// The rest stays in the queue for the next request
-		assertEq(ggAVAX.asset().balanceOf(address(ggAVAX)), ggAVAXWAVAXBefore);
-		assertEq(address(withdrawQueue).balance, yieldAmount - shares1 + withdrawQueue.totalAllocatedFunds());
+		assertEq(ggAVAX.asset().balanceOf(address(ggAVAX)), ggAVAXWAVAXBefore + yieldAmount - shares1);
+		assertEq(address(withdrawQueue).balance, withdrawQueue.totalAllocatedFunds());
 	}
 
 	function testCancelRequestsBatch() public {
@@ -2395,6 +2404,276 @@ contract WithdrawQueueTest is BaseTest {
 		assertGt(ggAVAX.asset().balanceOf(address(ggAVAX)), ggAVAX.amountAvailableForStaking());
 		// Key verification: The first request should be allocated exactly 100 ether despite 105 ether being redeemed
 		assertEq(withdrawQueue.getRequestInfo(requestId1).allocatedFunds, 100 ether, "First request should have exactly 100 ether allocated");
+	}
+
+	// ==================== PAUSE FUNCTIONALITY TESTS ====================
+
+	function testPauseUnpause() public {
+		// Initially not paused
+		assertFalse(withdrawQueue.paused());
+
+		// Guardian can pause
+		vm.prank(guardian);
+		vm.expectEmit(true, false, false, false);
+		emit ContractPaused(guardian);
+		withdrawQueue.pause();
+		assertTrue(withdrawQueue.paused());
+
+		// Guardian can unpause
+		vm.prank(guardian);
+		vm.expectEmit(true, false, false, false);
+		emit ContractUnpaused(guardian);
+		withdrawQueue.unpause();
+		assertFalse(withdrawQueue.paused());
+	}
+
+	function testOnlyPauserCanPause() public {
+		// Non-pauser cannot pause
+		vm.prank(alice);
+		vm.expectRevert();
+		withdrawQueue.pause();
+
+		// Non-pauser cannot unpause
+		vm.prank(alice);
+		vm.expectRevert();
+		withdrawQueue.unpause();
+
+		// The guardian should already have PAUSER_ROLE from setup
+		// Test that guardian can pause/unpause
+		vm.prank(guardian);
+		withdrawQueue.pause();
+		assertTrue(withdrawQueue.paused());
+
+		vm.prank(guardian);
+		withdrawQueue.unpause();
+		assertFalse(withdrawQueue.paused());
+	}
+
+	function testRequestUnstakeWhenPaused() public {
+		// Ensure Alice has tokens to unstake
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 1 ether}();
+
+		// Approve WithdrawQueue to spend Alice's tokens
+		vm.prank(alice);
+		ggAVAX.approve(address(withdrawQueue), 1 ether);
+
+		// Pause the contract
+		vm.prank(guardian);
+		withdrawQueue.pause();
+
+		// requestUnstake should revert when paused
+		vm.prank(alice);
+		vm.expectRevert(WithdrawQueue.ContractPausedError.selector);
+		withdrawQueue.requestUnstake(1 ether, EXPIRATION_DELAY);
+
+		// Unpause the contract
+		vm.prank(guardian);
+		withdrawQueue.unpause();
+
+		// requestUnstake should work when unpaused
+		vm.prank(alice);
+		withdrawQueue.requestUnstake(1 ether, EXPIRATION_DELAY);
+	}
+
+	function testRequestUnstakeOnBehalfOfWhenPaused() public {
+		// Ensure Alice has tokens to unstake
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 1 ether}();
+
+		// Approve WithdrawQueue to spend Alice's tokens
+		vm.prank(alice);
+		ggAVAX.approve(address(withdrawQueue), 1 ether);
+
+		// Pause the contract
+		vm.prank(guardian);
+		withdrawQueue.pause();
+
+		// requestUnstakeOnBehalfOf should revert when paused
+		vm.prank(alice);
+		vm.expectRevert(WithdrawQueue.ContractPausedError.selector);
+		withdrawQueue.requestUnstakeOnBehalfOf(1 ether, bob, EXPIRATION_DELAY);
+
+		// Unpause the contract
+		vm.prank(guardian);
+		withdrawQueue.unpause();
+
+		// requestUnstakeOnBehalfOf should work when unpaused
+		vm.prank(alice);
+		withdrawQueue.requestUnstakeOnBehalfOf(1 ether, bob, EXPIRATION_DELAY);
+	}
+
+	function testOtherFunctionsWorkWhenPaused() public {
+		// Ensure Alice has tokens to unstake
+		vm.prank(alice);
+		ggAVAX.depositAVAX{value: 1 ether}();
+
+		// Approve WithdrawQueue to spend Alice's tokens
+		vm.prank(alice);
+		ggAVAX.approve(address(withdrawQueue), 1 ether);
+
+		// Create a request before pausing
+		vm.prank(alice);
+		uint256 requestId = withdrawQueue.requestUnstake(1 ether, EXPIRATION_DELAY);
+
+		// Pause the contract
+		vm.prank(guardian);
+		withdrawQueue.pause();
+
+		// Other functions should still work when paused
+		// getRequestInfo should work before canceling
+		WithdrawQueue.UnstakeRequest memory request = withdrawQueue.getRequestInfo(requestId);
+		assertEq(request.requester, alice);
+
+		// cancelRequest should work
+		vm.prank(alice);
+		withdrawQueue.cancelRequest(requestId);
+
+		// depositFromStaking should work - Charlie has DEPOSITOR_ROLE
+		vm.deal(charlie, 1 ether);
+		vm.prank(charlie);
+		withdrawQueue.depositFromStaking{value: 1 ether}(0, 1 ether, bytes32("TEST"));
+	}
+
+	function testPauseStateEvents() public {
+		// Test pause event
+		vm.prank(guardian);
+		vm.expectEmit(true, false, false, false);
+		emit ContractPaused(guardian);
+		withdrawQueue.pause();
+
+		// Test unpause event
+		vm.prank(guardian);
+		vm.expectEmit(true, false, false, false);
+		emit ContractUnpaused(guardian);
+		withdrawQueue.unpause();
+	}
+
+	function testUnallocatedAVAXSentToGGAVAX() public {
+		// Create one large unstake request that can't be fulfilled
+		uint256 largeRequestAmount = 1000 ether;
+
+		vm.startPrank(alice);
+		ggAVAX.depositAVAX{value: largeRequestAmount}();
+		ggAVAX.approve(address(withdrawQueue), largeRequestAmount);
+		uint256 requestId = withdrawQueue.requestUnstake(largeRequestAmount, 0);
+		vm.stopPrank();
+
+		// Drain ggAVAX liquidity to ensure request can't be fulfilled
+		vm.startPrank(address(minipoolMgr));
+		ggAVAX.withdrawForStaking(ggAVAX.amountAvailableForStaking());
+		vm.stopPrank();
+
+		// Record initial ggAVAX WAVAX balance
+		uint256 initialGGAVAXBalance = ggAVAX.asset().balanceOf(address(ggAVAX));
+
+		// Call depositFromStaking with insufficient AVAX that can't fulfill the large request
+		uint256 insufficientAmount = 500 ether; // Less than the 1000 ether request
+		vm.deal(charlie, insufficientAmount);
+		vm.prank(charlie);
+		withdrawQueue.depositFromStaking{value: insufficientAmount}(insufficientAmount, 0, bytes32("TEST_YIELD"));
+
+		// Verify the request is still pending (couldn't be fulfilled)
+		assertTrue(withdrawQueue.isRequestPending(requestId), "Large request should still be pending");
+
+		// Verify all AVAX was sent to ggAVAX (none remains unallocated in WithdrawQueue)
+		uint256 finalGGAVAXBalance = ggAVAX.asset().balanceOf(address(ggAVAX));
+		assertEq(finalGGAVAXBalance, initialGGAVAXBalance + insufficientAmount, "All AVAX should be sent to ggAVAX");
+
+		// Verify no unallocated AVAX remains in WithdrawQueue
+		assertEq(address(withdrawQueue).balance, withdrawQueue.totalAllocatedFunds(), "No unallocated AVAX should remain");
+	}
+
+	function testMaxRequestsLimitPreservesBaseRewardRatio() public {
+		uint256 totalAmount = 1000 ether;
+
+		// Lower the maxRequestsPerStakingDeposit limit to 3 for this test
+		vm.prank(guardian);
+		withdrawQueue.setMaxRequestsPerStakingDeposit(3);
+
+		vm.prank(bob);
+		ggAVAX.depositAVAX{value: totalAmount}();
+
+		vm.prank(address(minipoolMgr));
+		ggAVAX.withdrawForStaking(totalAmount);
+
+		// Create 5 requests to exceed the limit
+		vm.startPrank(alice);
+		ggAVAX.depositAVAX{value: 500 ether}();
+		ggAVAX.approve(address(withdrawQueue), type(uint256).max);
+
+		for (uint i = 0; i < 5; i++) {
+			withdrawQueue.requestUnstake(100 ether, 0);
+		}
+		vm.stopPrank();
+
+		// Set up mixed baseAmt/rewardAmt call (70% base, 30% reward)
+		uint256 baseAmt = 700 ether; // 70%
+		uint256 rewardAmt = 300 ether; // 30%
+
+		uint256 excessAmt = 700 ether; // fulfill 3 requests out of 1000 ether deposited
+
+		// Record initial ggAVAX WAVAX balance
+		uint256 initialGGAVAXBalance = ggAVAX.asset().balanceOf(address(ggAVAX));
+
+		// Listen for DepositedFromStaking events to verify proper ratio preservation
+		vm.recordLogs();
+
+		vm.deal(charlie, totalAmount);
+		vm.prank(charlie);
+		withdrawQueue.depositFromStaking{value: totalAmount}(baseAmt, rewardAmt, bytes32("RATIO_TEST"));
+
+		// Verify only 3 requests were fulfilled (hit the limit)
+		assertEq(withdrawQueue.getFulfilledRequestsCount(), 3, "Should fulfill exactly 3 requests due to limit");
+		assertEq(withdrawQueue.getPendingRequestsCount(), 2, "Should have 2 requests still pending");
+
+		// Verify excess AVAX was sent to ggAVAX
+		uint256 finalGGAVAXBalance = ggAVAX.asset().balanceOf(address(ggAVAX));
+		assertEq(finalGGAVAXBalance, initialGGAVAXBalance + excessAmt, "Excess AVAX should be sent to ggAVAX");
+
+		// Parse logs to verify DepositedFromStaking events maintain proper base/reward ratios
+		Vm.Log[] memory logs = vm.getRecordedLogs();
+
+		uint256 totalBaseAmtDeposited = 0;
+		uint256 totalRewardAmtDeposited = 0;
+
+		for (uint256 i = 0; i < logs.length; i++) {
+			if (logs[i].topics[0] == keccak256("DepositedFromStaking(uint256,uint256,bytes32,uint256)")) {
+				// Decode the DepositedFromStaking event
+				(uint256 eventBaseAmt, uint256 eventRewardAmt,,) = abi.decode(logs[i].data, (uint256, uint256, bytes32, uint256));
+				totalBaseAmtDeposited += eventBaseAmt;
+				totalRewardAmtDeposited += eventRewardAmt;
+			}
+		}
+
+		// Verify the total deposited amounts maintain the original 70/30 ratio
+		uint256 totalDeposited = totalBaseAmtDeposited + totalRewardAmtDeposited;
+		if (totalDeposited > 0) {
+			uint256 actualBaseRatio = (totalBaseAmtDeposited * 100) / totalDeposited; // Convert to percentage
+			uint256 actualRewardRatio = (totalRewardAmtDeposited * 100) / totalDeposited;
+
+			// Allow for small rounding differences
+			assertApproxEqAbs(actualBaseRatio, 70, 1, "Base ratio should be approximately 70%");
+			assertApproxEqAbs(actualRewardRatio, 30, 1, "Reward ratio should be approximately 30%");
+		}
+
+		// Verify no unallocated AVAX remains
+		assertEq(address(withdrawQueue).balance, withdrawQueue.totalAllocatedFunds(), "No unallocated AVAX should remain");
+	}
+
+	function testPauseStateTransitions() public {
+		// Test multiple pause/unpause cycles
+		for (uint256 i = 0; i < 3; i++) {
+			// Pause
+			vm.prank(guardian);
+			withdrawQueue.pause();
+			assertTrue(withdrawQueue.paused());
+
+			// Unpause
+			vm.prank(guardian);
+			withdrawQueue.unpause();
+			assertFalse(withdrawQueue.paused());
+		}
 	}
 }
 

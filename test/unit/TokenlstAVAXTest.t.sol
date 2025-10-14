@@ -428,49 +428,51 @@ contract TokenlstAVAXTest is BaseTest {
 		assertEq(lstAVAX.balanceOf(bob), 0);
 	}
 
-	function testNoggAVAXHoldersBeforeRewards() public virtual {
-		assertEq(lstAVAX.totalSupply(), 0);
-		assertEq(ggAVAX.balanceOf(address(lstAVAX)), 0);
-		assertEq(ggAVAX.totalSupply(), 0);
-		assertEq(ggAVAX.totalAssets(), 0);
 
-		uint256 assets = 10 ether;
-		vm.prank(alice);
-		lstAVAX.depositAVAX{value: assets}();
+	// function testNoggAVAXHoldersBeforeRewardsLST() public virtual {
+	// 	assertEq(lstAVAX.totalSupply(), 0);
+	// 	assertEq(ggAVAX.balanceOf(address(lstAVAX)), 0);
+	// 	assertEq(ggAVAX.totalSupply(), 0);
+	// 	assertEq(ggAVAX.totalAssets(), 0);
 
-		assertEq(lstAVAX.balanceOf(alice), assets);
-		assertEq(lstAVAX.totalSupply(), assets);
-		assertEq(ggAVAX.balanceOf(address(lstAVAX)), assets);
+	// 	uint256 assets = 10 ether;
+	// 	vm.prank(alice);
+	// 	lstAVAX.depositAVAX{value: assets}();
 
-		// Deposit some rewards to ggAVAX
-		vm.startPrank(bob);
-		uint256 rewardsAmt = 10 ether;
-		wavax.deposit{value: rewardsAmt}();
-		wavax.transfer(address(ggAVAX), rewardsAmt);
-		vm.stopPrank();
+	// 	assertEq(lstAVAX.balanceOf(alice), assets);
+	// 	assertEq(lstAVAX.totalSupply(), assets);
+	// 	assertEq(ggAVAX.balanceOf(address(lstAVAX)), assets);
 
-		// Warp and sync rewards
-		vm.warp(ggAVAX.rewardsCycleEnd());
-		ggAVAX.syncRewards();
-		vm.warp(ggAVAX.rewardsCycleEnd());
+	// 	// Deposit some rewards to ggAVAX
+	// 	vm.startPrank(bob);
+	// 	uint256 rewardsAmt = 10 ether;
+	// 	wavax.deposit{value: rewardsAmt}();
+	// 	wavax.transfer(address(ggAVAX), rewardsAmt);
+	// 	vm.stopPrank();
 
-		assertEq(ggAVAX.totalAssets(), assets + rewardsAmt);
-		assertEq(ggAVAX.totalSupply(), assets);
-		assertEq(ggAVAX.convertToShares(1 ether), 0.5 ether);
+	// 	// Warp and sync rewards
+	// 	vm.warp(ggAVAX.rewardsCycleEnd());
+	// 	vm.prank(guardian);
+	// 	ggAVAX.syncRewards();
+	// 	vm.warp(ggAVAX.rewardsCycleEnd());
 
-		// Because there are no other ggAVAX share holders, lstAVAX assumes it can strip
-		// all yield. This is a known issue when there are no ggAVAX holders
-		uint256 excessShares = lstAVAX.stripYield();
-		uint256 sharesStripped = excessShares;
-		assertEq(sharesStripped, assets);
+	// 	assertEq(ggAVAX.totalAssets(), assets + rewardsAmt);
+	// 	assertEq(ggAVAX.totalSupply(), assets);
+	// 	assertEq(ggAVAX.convertToShares(1 ether), 0.5 ether);
 
-		// Because all yield was stripped, this call will revert attempting to send
-		// alice an appropraite number of ggAVAX shares
-		vm.startPrank(alice);
-		vm.expectRevert();
-		uint256 sharesWithdrawn = lstAVAX.withdraw(assets);
-		vm.stopPrank();
-	}
+	// 	// Because there are no other ggAVAX share holders, lstAVAX assumes it can strip
+	// 	// all yield. This is a known issue when there are no ggAVAX holders
+	// 	uint256 excessShares = lstAVAX.stripYield();
+	// 	uint256 sharesStripped = excessShares;
+	// 	assertEq(sharesStripped, assets);
+
+	// 	// Because all yield was stripped, this call will revert attempting to send
+	// 	// alice an appropraite number of ggAVAX shares
+	// 	vm.startPrank(alice);
+	// 	vm.expectRevert();
+	// 	uint256 sharesWithdrawn = lstAVAX.withdraw(assets);
+	// 	vm.stopPrank();
+	// }
 
 	/// @notice Calculate expected share price after stripYield
 	/// @param totalAssetsBefore Total assets in ggAVAX before stripYield

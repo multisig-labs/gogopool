@@ -10,6 +10,9 @@ contract OcyticusTest is BaseTest {
 
 	function testPauseEverything() public {
 		vm.prank(guardian);
+		ocyticus.addDefender(guardian);
+
+		vm.prank(guardian);
 		ocyticus.pauseEverything();
 		assertTrue(dao.getContractPaused("MinipoolManager"));
 		assertTrue(dao.getContractPaused("RewardsPool"));
@@ -75,9 +78,12 @@ contract OcyticusTest is BaseTest {
 
 	function testDisableAllMultisigs() public {
 		address alice = getActor("alice");
+		address bob = getActor("bob");
+
 		vm.startPrank(guardian);
 		multisigMgr.registerMultisig(alice);
 		multisigMgr.enableMultisig(alice);
+		ocyticus.addDefender(bob);
 		vm.stopPrank();
 
 		int256 rialtoIndex = multisigMgr.getIndexOf(address(rialto));
@@ -92,7 +98,7 @@ contract OcyticusTest is BaseTest {
 		(addr, enabled) = multisigMgr.getMultisig(uint256(aliceIndex));
 		assert(enabled);
 
-		vm.prank(guardian);
+		vm.prank(bob);
 		ocyticus.disableAllMultisigs();
 
 		(addr, enabled) = multisigMgr.getMultisig(uint256(rialtoIndex));

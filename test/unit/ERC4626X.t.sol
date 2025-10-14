@@ -33,6 +33,9 @@ contract xERC4626Test is Test {
 		// Grant WITHDRAW_QUEUE_ROLE to the test contract for withdraw function testing
 		xToken.grantRole(xToken.WITHDRAW_QUEUE_ROLE(), address(this));
 
+		// Grant SYNC_REWARDS_ROLE to the test contract for syncRewards function testing
+		xToken.grantRole(xToken.SYNC_REWARDS_ROLE(), address(this));
+
 		vm.stopPrank();
 	}
 

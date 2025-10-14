@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pragma solidity 0.8.17;
 
-import {IWAVAX} from "../interface/IWAVAX.sol";
-import {TokenggAVAX} from "./tokens/TokenggAVAX.sol";
-import {Storage} from "./Storage.sol";
+import {IWAVAX} from "../../interface/IWAVAX.sol";
+import {TokenggAVAX} from "../tokens/TokenggAVAX.sol";
+import {Storage} from "../Storage.sol";
 
 import {ERC20} from "@rari-capital/solmate/src/tokens/ERC20.sol";
 
@@ -74,8 +74,6 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	event PendingRequestsNotProcesses(uint256 pendingRequests);
 	event ContractPaused(address indexed pauser);
 	event ContractUnpaused(address indexed unpauser);
-	event DepositedFromStaking(uint256 baseAmt, uint256 rewardAmt, bytes32 source, uint256 value);
-	event YieldDeposited(uint256 value);
 
 	error DirectAVAXDepositsNotSupported();
 	error InsufficientAVAXBalance();
@@ -324,7 +322,6 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 		uint256 excessAVAX = 0;
 		uint256 ggAVAXAvailableAssets = 0;
-		uint256 feeBips = store.getUint(keccak256(abi.encodePacked("ProtocolDAO.FeeBips")));
 
 		// Process pending requests from front of queue, removing fulfilled requests and then leave the money in the contract if still more to process
 		uint256 requestsProcessed = 0;
@@ -343,12 +340,17 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			uint256 withdrawQueueAvailableAssets = address(this).balance > totalAllocatedFunds ? address(this).balance - totalAllocatedFunds : 0;
 			if (withdrawQueueAvailableAssets + ggAVAXAvailableAssets < req.expectedAssets) {
 				emit InsufficientLiquidity(withdrawQueueAvailableAssets + ggAVAXAvailableAssets, req.expectedAssets);
-				break;
+				if (excessAVAX > 0) {
+					_depositYield(excessAVAX);
+				}
+				return;
 			}
 
 			// Determine if we need to deposit additional assets to ggAVAX
 			if (ggAVAXAvailableAssets < req.expectedAssets) {
 				uint256 depositAmountIncludingFees = req.expectedAssets - ggAVAXAvailableAssets;
+
+				uint256 feeBips = store.getUint(keccak256(abi.encodePacked("ProtocolDAO.FeeBips")));
 
 				if (feeBips > 0 && rewardToBaseRatio > 0) {
 					uint256 scaleFactor = uint256(1 ether).mulDivUp(10000, 10000 - feeBips);
@@ -357,7 +359,10 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 				if (depositAmountIncludingFees > withdrawQueueAvailableAssets) {
 					emit InsufficientLiquidity(withdrawQueueAvailableAssets, depositAmountIncludingFees);
-					break;
+					if (excessAVAX > 0) {
+						_depositYield(excessAVAX);
+					}
+					return;
 				}
 
 				uint256 proRatedRewardAmt = depositAmountIncludingFees.mulWadDown(rewardToBaseRatio);
@@ -421,6 +426,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 		if (pendingRequests.length() != 0) {
 			emit PendingRequestsNotProcesses(pendingRequests.length());
+			return;
 		}
 
 		// Handle any remaining amounts after processing all pending requests
@@ -432,10 +438,8 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		// Handle any unallocated AVAX remaining in the contract after processing all pending requests
 		uint256 unallocatedAVAX = address(this).balance - totalAllocatedFunds;
 		if (unallocatedAVAX > 0) {
-			_depositToGGAVAX(unallocatedAVAX, 0, bytes32("WITHDRAW_QUEUE"), unallocatedAVAX);
+			_depositToGGAVAX(0, unallocatedAVAX, bytes32("WITHDRAW_QUEUE"), unallocatedAVAX);
 		}
-
-		require(address(this).balance - totalAllocatedFunds == 0, "No Unallocated AVAX should remain");
 	}
 
 	/// @notice Reclaim AVAX from a single expired request and return ggAVAX to the user
@@ -769,14 +773,12 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	/// @param source The source of the deposit
 	/// @param value The amount of AVAX to deposit
 	function _depositToGGAVAX(uint256 baseAmt, uint256 rewardAmt, bytes32 source, uint256 value) internal {
-		emit DepositedFromStaking(baseAmt, rewardAmt, source, value);
 		tokenggAVAX.depositFromStaking{value: value}(baseAmt, rewardAmt, source);
 	}
 
 	/// @notice Deposit AVAX to ggAVAX via yield method
 	/// @param value The amount of AVAX to deposit
 	function _depositYield(uint256 value) internal {
-		emit YieldDeposited(value);
 		tokenggAVAX.depositYield{value: value}(bytes32("WITHDRAW_QUEUE"));
 	}
 

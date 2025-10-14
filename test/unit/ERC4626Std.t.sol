@@ -17,6 +17,7 @@ contract ERC4626StdTest is ERC4626Test {
 		// Construct all contracts as Guardian
 		vm.startPrank(guardian, guardian);
 
+
 		// Using mock so it has public mint and burn, required for the tests
 		MockERC20 wavax = new MockERC20("WAVAX", "WAVAX", 18);
 		_underlying_ = address(wavax);
@@ -28,6 +29,7 @@ contract ERC4626StdTest is ERC4626Test {
 		registerContract(store, "TokenggAVAX", address(ggAVAX));
 
 		ggAVAX.initialize(store, wavax, 0);
+		ggAVAX.grantRole(ggAVAX.SYNC_REWARDS_ROLE(), guardian);
 		ggAVAX.syncRewards();
 
 		// Grant DEFAULT_ADMIN_ROLE to the test contract so it can grant roles during testing

@@ -87,6 +87,9 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 	/// @notice Role identifier for withdraw queue operations
 	bytes32 public constant WITHDRAW_QUEUE_ROLE = keccak256("WITHDRAW_QUEUE_ROLE");
 
+	/// @notice Role identifier for sync rewards operations
+	bytes32 public constant SYNC_REWARDS_ROLE = keccak256("SYNC_REWARDS_ROLE");
+
 	/// @notice Source identifier for minipool operations
 	bytes32 public constant MINIPOOL_SOURCE = bytes32("MINIPOOL_SOURCE");
 
@@ -148,9 +151,9 @@ contract TokenggAVAX is Initializable, ERC4626Upgradeable, BaseUpgradeable {
 		require(msg.sender == address(asset));
 	}
 
-	/// @notice Distributes rewards to TokenggAVAX holders. Public, anyone can call.
+	/// @notice Distributes rewards to TokenggAVAX holders. Only addresses with SYNC_REWARDS_ROLE can call.
 	/// 				All surplus `asset` balance of the contract over the internal balance becomes queued for the next cycle.
-	function syncRewards() public {
+	function syncRewards() public onlyRole(SYNC_REWARDS_ROLE) {
 		uint32 timestamp = block.timestamp.safeCastTo32();
 
 		if (timestamp < rewardsCycleEnd) {

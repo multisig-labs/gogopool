@@ -25,6 +25,7 @@ contract TokenggAVAXTestFirstDepositor is BaseTest, IWithdrawer {
 
 		token.grantRole(token.WITHDRAW_QUEUE_ROLE(), attacker);
 		token.grantRole(token.WITHDRAW_QUEUE_ROLE(), victim);
+		token.grantRole(token.SYNC_REWARDS_ROLE(), address(this));
 
 		// deposit 1 wei to mint 1 wei of shares
 		vm.startPrank(attacker);
@@ -100,6 +101,7 @@ contract TokenggAVAXTestFirstDepositor is BaseTest, IWithdrawer {
 		// Note: calling from test contract since guardian is proxy admin and cannot call implementation
 		token.grantRole(token.WITHDRAW_QUEUE_ROLE(), attacker);
 		token.grantRole(token.WITHDRAW_QUEUE_ROLE(), victim);
+		token.grantRole(token.SYNC_REWARDS_ROLE(), address(this));
 
 		// deposit 1 wei to mint 1 wei of shares
 		vm.startPrank(attacker);
@@ -162,6 +164,7 @@ contract TokenggAVAXTestFirstDepositor is BaseTest, IWithdrawer {
 
 		token.grantRole(token.WITHDRAW_QUEUE_ROLE(), attacker);
 		token.grantRole(token.WITHDRAW_QUEUE_ROLE(), victim);
+		token.grantRole(token.SYNC_REWARDS_ROLE(), address(this));
 
 		// deposit 1 wei to mint 1 wei of shares
 		vm.startPrank(attacker);
