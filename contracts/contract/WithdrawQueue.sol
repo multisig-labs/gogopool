@@ -159,10 +159,6 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			revert RequestNotFulfilled();
 		}
 
-		if (block.timestamp < req.claimableTime) {
-			revert TooEarlyToClaim();
-		}
-
 		if (block.timestamp >= req.expirationTime) {
 			revert RequestExpired();
 		}
@@ -627,7 +623,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			return false;
 		}
 		UnstakeRequest storage req = requests[requestId];
-		return block.timestamp >= req.claimableTime && block.timestamp < req.expirationTime;
+		return block.timestamp < req.expirationTime;
 	}
 
 	/// @notice Get unstake request IDs for a user, paginated
