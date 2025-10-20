@@ -81,7 +81,6 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	error RequestNotExpired();
 	error RequestNotPending();
 	error RequestNotFulfilledOrPending();
-	error TooEarlyToClaim();
 	error TooLateToCancelRequest();
 	error ZeroShares();
 	error InvalidRedemptionAmount();
