@@ -454,13 +454,7 @@ contract WithdrawQueueTest is BaseTest {
 		vm.prank(charlie);
 		withdrawQueue.depositFromStaking{value: yieldAmount}(0, yieldAmount, bytes32("TEST_YIELD"));
 
-		// Should not be claimable before delay
-		assertEq(withdrawQueue.canClaimRequest(requestId), false);
-
-		// Fast forward past delay
-		vm.warp(block.timestamp + UNSTAKE_DELAY + 1);
-
-		// Now should be claimable
+		// Should be immediately claimable after fulfillment
 		assertEq(withdrawQueue.canClaimRequest(requestId), true);
 
 		// Check balance before claim
@@ -499,13 +493,7 @@ contract WithdrawQueueTest is BaseTest {
 		vm.prank(charlie);
 		withdrawQueue.depositFromStaking{value: yieldAmount}(0, yieldAmount, bytes32("TEST_YIELD"));
 
-		// Should not be claimable before delay even after fulfillment
-		assertEq(withdrawQueue.canClaimRequest(requestId), false);
-
-		// Fast forward past delay
-		vm.warp(block.timestamp + UNSTAKE_DELAY + 1);
-
-		// Now should be claimable
+		// Should be immediately claimable after fulfillment
 		assertEq(withdrawQueue.canClaimRequest(requestId), true);
 	}
 
@@ -1749,11 +1737,11 @@ contract WithdrawQueueTest is BaseTest {
 		vm.prank(charlie);
 		withdrawQueue.depositFromStaking{value: 150 ether}(0, 150 ether, bytes32("TEST_YIELD"));
 
-		// Verify request is fulfilled but not yet claimable
+		// Verify request is fulfilled and immediately claimable
 		assertEq(withdrawQueue.isFulfilledRequest(requestId), true);
-		assertEq(withdrawQueue.canClaimRequest(requestId), false);
+		assertEq(withdrawQueue.canClaimRequest(requestId), true);
 
-		// Should be able to cancel before claimable time
+		// Should be able to cancel fulfilled request before claimable time cutoff
 		vm.prank(alice);
 		withdrawQueue.cancelRequest(requestId);
 
