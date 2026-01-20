@@ -179,7 +179,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			revert RequestNotFulfilled();
 		}
 
-		if (block.timestamp >= req.expirationTime) {
+  	if (block.timestamp >= req.expirationTime) {
 			revert RequestExpired();
 		}
 
@@ -300,28 +300,23 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	}
 
 	/// @notice Deposit AVAX to help fulfill pending unstake requests
-	/// @dev Uses the deposited AVAX to fulfill waiting requests, sends excess back to stAVAX
+	/// @dev Deposits all AVAX to ggAVAX first for safety, then withdraws as needed to fulfill requests
 	function depositFromStaking(uint256 baseAmt, uint256 rewardAmt, bytes32 source) external payable onlyRole(DEPOSITOR_ROLE) {
 		// Validate that the sum of baseAmt and rewardAmt equals msg.value
 		if (baseAmt + rewardAmt != msg.value) {
 			revert InvalidYieldAmounts();
 		}
 
-		emit StakeDeposited(source, msg.sender, msg.value);
-
-		// Record reward to base ratio for fractional deposits
-		uint256 rewardToBaseRatio;
-		if (rewardAmt == 0) {
-			rewardToBaseRatio = 0;
-		} else {
-			rewardToBaseRatio = rewardAmt.divWadDown(baseAmt + rewardAmt);
+		// Immediately deposit all AVAX to ggAVAX for safety - ensures funds are always deposited correctly
+		if (msg.value > 0) {
+			_depositToGGAVAX(baseAmt, rewardAmt, source, msg.value);
+		  emit StakeDeposited(source, msg.sender, msg.value);
 		}
 
 		uint256 excessAVAX = 0;
-		uint256 ggAVAXAvailableAssets = 0;
-		uint256 feeBips = store.getUint(keccak256(abi.encodePacked("ProtocolDAO.FeeBips")));
+		uint256 ggAVAXAvailableAssets = _getGGAVAXAvailableAssets();
 
-		// Process pending requests from front of queue, removing fulfilled requests and then leave the money in the contract if still more to process
+		// Process pending requests from front of queue, withdrawing from ggAVAX as needed
 		uint256 requestsProcessed = 0;
 		while (pendingRequests.length() > 0 && requestsProcessed < maxRequestsPerStakingDeposit) {
 			uint256 requestId = uint256(pendingRequestsQueue.front());
@@ -333,44 +328,9 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 
 			UnstakeRequest storage req = requests[requestId];
 
-			ggAVAXAvailableAssets = _getGGAVAXAvailableAssets();
-
-			uint256 withdrawQueueAvailableAssets = address(this).balance > totalAllocatedFunds ? address(this).balance - totalAllocatedFunds : 0;
-			if (withdrawQueueAvailableAssets + ggAVAXAvailableAssets < req.expectedAssets) {
-				emit InsufficientLiquidity(withdrawQueueAvailableAssets + ggAVAXAvailableAssets, req.expectedAssets);
-				break;
-			}
-
-			// Determine if we need to deposit additional assets to ggAVAX
 			if (ggAVAXAvailableAssets < req.expectedAssets) {
-				uint256 depositAmountIncludingFees = req.expectedAssets - ggAVAXAvailableAssets;
-
-				if (feeBips > 0 && rewardToBaseRatio > 0) {
-					uint256 scaleFactor = uint256(1 ether).mulDivUp(10000, 10000 - feeBips);
-					depositAmountIncludingFees = depositAmountIncludingFees.mulWadUp(scaleFactor);
-				}
-
-				if (depositAmountIncludingFees > withdrawQueueAvailableAssets) {
-					emit InsufficientLiquidity(withdrawQueueAvailableAssets, depositAmountIncludingFees);
-					break;
-				}
-
-				uint256 proRatedRewardAmt = depositAmountIncludingFees.mulWadDown(rewardToBaseRatio);
-				uint256 proRatedBaseAmt = depositAmountIncludingFees - proRatedRewardAmt;
-
-				if (proRatedBaseAmt > baseAmt) {
-					baseAmt = 0;
-				} else {
-					baseAmt -= proRatedBaseAmt;
-				}
-
-				if (proRatedRewardAmt > rewardAmt) {
-					rewardAmt = 0;
-				} else {
-					rewardAmt -= proRatedRewardAmt;
-				}
-
-				_depositToGGAVAX(proRatedBaseAmt, proRatedRewardAmt, source, depositAmountIncludingFees);
+				emit InsufficientLiquidity(ggAVAXAvailableAssets, req.expectedAssets);
+				break;
 			}
 
 			// Try to redeem all shares from initial request
@@ -389,6 +349,9 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 				pendingRequestsQueue.popFront();
 				fulfilledRequests.add(requestId);
 				emit RequestFulfilled(source, requestId, req.expectedAssets);
+
+				// Track available assets locally
+				ggAVAXAvailableAssets -= assetsReturned;
 
 				// record accumulated excess to send back later
 				if (assetsReturned > req.expectedAssets) {
@@ -417,20 +380,6 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		if (pendingRequests.length() != 0) {
 			emit PendingRequestsNotProcesses(pendingRequests.length());
 		}
-
-		// Handle any remaining amounts after processing all pending requests
-		if (baseAmt > 0 || rewardAmt > 0) {
-			uint256 remainingTotal = baseAmt + rewardAmt;
-			_depositToGGAVAX(baseAmt, rewardAmt, source, remainingTotal);
-		}
-
-		// Handle any unallocated AVAX remaining in the contract after processing all pending requests
-		uint256 unallocatedAVAX = address(this).balance - totalAllocatedFunds;
-		if (unallocatedAVAX > 0) {
-			_depositToGGAVAX(unallocatedAVAX, 0, bytes32("WITHDRAW_QUEUE"), unallocatedAVAX);
-		}
-
-		require(address(this).balance - totalAllocatedFunds == 0, "No Unallocated AVAX should remain");
 	}
 
 	/// @notice Reclaim AVAX from a single expired request and return ggAVAX to the user
@@ -755,6 +704,20 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			if (currentTime >= req.expirationTime) {
 				count++;
 			}
+		}
+	}
+
+	/// @notice Emergency function to deposit stuck AVAX back to ggAVAX
+	/// @dev Only callable by admin when AVAX is stuck in contract beyond allocated funds
+	/// @param baseAmt The portion of stuck AVAX that was originally base (principal)
+	/// @param rewardAmt The portion of stuck AVAX that was originally reward (yield)
+	function rescueStuckAVAX(uint256 baseAmt, uint256 rewardAmt) external onlyRole(DEPOSITOR_ROLE) {
+		uint256 stuckAVAX = address(this).balance - totalAllocatedFunds;
+		if (baseAmt + rewardAmt != stuckAVAX) {
+			revert InvalidYieldAmounts();
+		}
+		if (stuckAVAX > 0) {
+			_depositToGGAVAX(baseAmt, rewardAmt, bytes32("RESCUE"), stuckAVAX);
 		}
 	}
 
