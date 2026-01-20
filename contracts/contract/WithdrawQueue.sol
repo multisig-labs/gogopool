@@ -707,6 +707,20 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		}
 	}
 
+	/// @notice Emergency function to deposit stuck AVAX back to ggAVAX
+	/// @dev Only callable by admin when AVAX is stuck in contract beyond allocated funds
+	/// @param baseAmt The portion of stuck AVAX that was originally base (principal)
+	/// @param rewardAmt The portion of stuck AVAX that was originally reward (yield)
+	function rescueStuckAVAX(uint256 baseAmt, uint256 rewardAmt) external onlyRole(DEPOSITOR_ROLE) {
+		uint256 stuckAVAX = address(this).balance - totalAllocatedFunds;
+		if (baseAmt + rewardAmt != stuckAVAX) {
+			revert InvalidYieldAmounts();
+		}
+		if (stuckAVAX > 0) {
+			_depositToGGAVAX(baseAmt, rewardAmt, bytes32("RESCUE"), stuckAVAX);
+		}
+	}
+
 	/// @notice Deposit AVAX to ggAVAX
 	/// @param baseAmt The amount of base assets to deposit
 	/// @param rewardAmt The amount of reward assets to deposit
