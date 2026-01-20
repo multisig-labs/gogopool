@@ -21,7 +21,8 @@ contract TimelockTest is Test {
 
 	function setUp() public {
 		// Mainnet addrs
-		mainnetFork = vm.createFork("https://api.avax.network/ext/bc/C/rpc");
+		string memory rpcUrl = vm.envString("ETH_RPC_URL");
+		mainnetFork = vm.createFork(rpcUrl);
 		vm.selectFork(mainnetFork);
 		guardian = 0x6C104D5b914931BA179168d63739A297Dc29bCF3;
 		proxyAdmin = ProxyAdmin(0x5313c309CD469B751Ad3947568D65d4a70B247cF);

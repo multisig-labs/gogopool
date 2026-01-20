@@ -25,7 +25,8 @@ contract TwapGGPTest is Test {
 
 	function setUp() public {
 		// Mainnet addrs
-		mainnetFork = vm.createFork("https://api.avax.network/ext/bc/C/rpc");
+		string memory rpcUrl = vm.envString("ETH_RPC_URL");
+		mainnetFork = vm.createFork(rpcUrl);
 		vm.selectFork(mainnetFork);
 
 		tjpair = address(0xae671e0bF91CEaa4a6cB0D1294735EA3236d4586);

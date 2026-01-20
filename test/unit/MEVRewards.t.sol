@@ -17,7 +17,8 @@ contract MEVRewardsTest is Test {
 	IWAVAX wavax;
 
 	function setUp() public {
-		mainnetFork = vm.createFork("https://api.avax.network/ext/bc/C/rpc");
+		string memory rpcUrl = vm.envString("ETH_RPC_URL");
+		mainnetFork = vm.createFork(rpcUrl);
 		vm.selectFork(mainnetFork);
 
 		ggAVAXAddr = address(0xA25EaF2906FA1a3a13EdAc9B9657108Af7B703e3);
