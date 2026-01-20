@@ -100,7 +100,6 @@ contract WithdrawQueueGasTests is BaseTest {
 		// Test depositFromStaking gas usage
 		uint256 baseAmt = 1000 ether;
 		uint256 rewardAmt = 10 ether;
-		uint256 feeAmt = rewardAmt.mulDivDown(1000, 10000);
 		uint256 totalAmt = baseAmt + rewardAmt;
 
 		vm.prank(backgroundJob);

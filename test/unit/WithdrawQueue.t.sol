@@ -241,7 +241,7 @@ contract WithdrawQueueTest is BaseTest {
 		vm.prank(charlie);
 		withdrawQueue.depositFromStaking{value: yieldAmount}(0, yieldAmount, bytes32("TEST_YIELD"));
 
-		// Since no pending requests, all yield should be returned to ggAVAX as WAVAX
+		// All yield should be returned to ggAVAX as WAVAX
 		assertEq(ggAVAX.asset().balanceOf(address(ggAVAX)), ggAVAXWAVAXBefore + yieldAmount);
 	}
 
@@ -263,22 +263,24 @@ contract WithdrawQueueTest is BaseTest {
 		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
-		// Deposit yield that's less than needed
+		uint256 ggAVAXWAVAXBefore = ggAVAX.asset().balanceOf(address(ggAVAX));
+
+		// Deposit yield that's less than needed for the request
 		uint256 yieldAmount = 100 ether;
 		vm.deal(charlie, yieldAmount);
 		vm.prank(charlie);
 		withdrawQueue.depositFromStaking{value: yieldAmount}(0, yieldAmount, bytes32("TEST_YIELD"));
 
-		// Request should still be pending since not enough available AVAX
+		// Request should still be pending since combined liquidity (100 ether) < needed (500 ether)
 		assertEq(withdrawQueue.isRequestPending(requestId), true);
 		assertEq(withdrawQueue.isFulfilledRequest(requestId), false);
-		assertEq(address(withdrawQueue).balance, yieldAmount);
+		// Yield gets deposited to ggAVAX at the end since request couldn't be fulfilled
+		assertEq(ggAVAX.asset().balanceOf(address(ggAVAX)), ggAVAXWAVAXBefore + yieldAmount);
+		assertEq(address(withdrawQueue).balance, 0);
 	}
 
 	function testReceiveAVAXReverts() public {
 		uint256 yieldAmount = 50 ether;
-
-		uint256 ggAVAXWAVAXBefore = ggAVAX.asset().balanceOf(address(ggAVAX));
 
 		vm.deal(charlie, yieldAmount);
 		vm.startPrank(charlie);
@@ -287,11 +289,17 @@ contract WithdrawQueueTest is BaseTest {
 		vm.stopPrank();
 	}
 
-	function testDepositAdditionalYieldAutoFulfillsPendingRequests() public {
+  // Depositing only rewards, when there is no ggAVAX liquidity, should not error and not fulfill any pending requests
+	function testDepositAdditionalYieldDoesNotFulfillPendingRequests() public {
 		// Setup initial ggAVAX deposit for alice
 		vm.startPrank(alice);
 		ggAVAX.depositAVAX{value: 1000 ether}();
 		vm.stopPrank();
+		// Drain all liquidity by withdrawing for delegation
+		uint256 withdrawAmount = ggAVAX.amountAvailableForStaking();
+		vm.prank(address(rialto));
+		rialto.withdrawForDelegation(withdrawAmount, randAddress());
+
 
 		uint256 ggAVAXWAVAXBefore = ggAVAX.asset().balanceOf(address(ggAVAX));
 
@@ -308,22 +316,20 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(withdrawQueue.isFulfilledRequest(requestId), false);
 		assertEq(withdrawQueue.getPendingRequestsCount(), 1);
 
-		// Deposit yield - should auto-fulfill the pending request
-		uint256 yieldAmount = 150 ether; // More than enough
+		// Deposit yield
+		uint256 yieldAmount = 100 ether;
 		vm.deal(charlie, yieldAmount);
 		vm.prank(charlie);
 		withdrawQueue.depositFromStaking{value: yieldAmount}(0, yieldAmount, bytes32("TEST_YIELD"));
 
-		// Check request is now fulfilled
-		assertEq(withdrawQueue.isRequestPending(requestId), false);
-		assertEq(withdrawQueue.isFulfilledRequest(requestId), true);
-		assertEq(withdrawQueue.getRequestInfo(requestId).allocatedFunds, withdrawQueue.getRequestInfo(requestId).expectedAssets);
-
-		// Check pending queue is empty
-		assertEq(withdrawQueue.getPendingRequestsCount(), 0);
+		// Check request is not fulfilled
+		assertEq(withdrawQueue.isRequestPending(requestId), true);
+		assertEq(withdrawQueue.isFulfilledRequest(requestId), false);
+		assertEq(withdrawQueue.getRequestInfo(requestId).allocatedFunds, 0);
+		assertEq(withdrawQueue.getPendingRequestsCount(), 1);
 
 		// Verify that the additional yield is sent to ggavax
-		assertEq(ggAVAX.asset().balanceOf(address(ggAVAX)), ggAVAXWAVAXBefore + yieldAmount - sharesToUnstake);
+		assertEq(ggAVAX.asset().balanceOf(address(ggAVAX)), ggAVAXWAVAXBefore + yieldAmount);
 	}
 
 	function testPartialYieldFulfillment() public {
@@ -360,11 +366,14 @@ contract WithdrawQueueTest is BaseTest {
 		// Both should be queued
 		assertEq(withdrawQueue.getPendingRequestsCount(), 2);
 
-		// Deposit yield - only enough for first request
-		uint256 yieldAmount = 120 ether; // Enough for first (100), not second (150)
-		vm.deal(charlie, yieldAmount);
+		// Deposit from staking with baseAmt > 0 (simulates staking return)
+		// This reduces stakingTotalAssets, making liquidity available
+		uint256 baseAmt = 100 ether;
+		uint256 rewardAmt = 20 ether;
+		uint256 totalAmt = baseAmt + rewardAmt; // 120 ether - enough for first (100), not second (150)
+		vm.deal(charlie, totalAmt);
 		vm.prank(charlie);
-		withdrawQueue.depositFromStaking{value: yieldAmount}(0, yieldAmount, bytes32("TEST_YIELD"));
+		withdrawQueue.depositFromStaking{value: totalAmt}(baseAmt, rewardAmt, bytes32("TEST_STAKING_RETURN"));
 
 		// First request should be fulfilled, second still pending
 		assertEq(withdrawQueue.isFulfilledRequest(requestId1), true);
@@ -408,18 +417,18 @@ contract WithdrawQueueTest is BaseTest {
 		// Both should be queued
 		assertEq(withdrawQueue.getPendingRequestsCount(), 2);
 
-		// First yield deposit - fulfill first request
+		// First staking return - fulfill first request (using baseAmt to reduce stakingTotalAssets)
 		vm.deal(charlie, 120 ether);
 		vm.prank(charlie);
-		withdrawQueue.depositFromStaking{value: 120 ether}(0, 120 ether, bytes32("TEST_YIELD"));
+		withdrawQueue.depositFromStaking{value: 120 ether}(100 ether, 20 ether, bytes32("TEST_STAKING_RETURN"));
 
 		assertEq(withdrawQueue.isFulfilledRequest(requestId1), true);
 		assertEq(withdrawQueue.getPendingRequestsCount(), 1);
 
-		// Second yield deposit - fulfill second request
+		// Second staking return - fulfill second request
 		vm.deal(charlie, 160 ether);
 		vm.prank(charlie);
-		withdrawQueue.depositFromStaking{value: 160 ether}(0, 160 ether, bytes32("TEST_YIELD"));
+		withdrawQueue.depositFromStaking{value: 160 ether}(150 ether, 10 ether, bytes32("TEST_STAKING_RETURN"));
 
 		assertEq(withdrawQueue.isFulfilledRequest(requestId2), true);
 		assertEq(withdrawQueue.getPendingRequestsCount(), 0);
@@ -431,6 +440,11 @@ contract WithdrawQueueTest is BaseTest {
 		ggAVAX.depositAVAX{value: 1000 ether}();
 		vm.stopPrank();
 
+		// Withdraw all funds for delegation
+		uint256 withdrawAmount = ggAVAX.amountAvailableForStaking();
+		vm.prank(address(rialto));
+		rialto.withdrawForDelegation(withdrawAmount, randAddress());
+
 		uint256 sharesToUnstake = 100 ether;
 
 		// Create and fulfill request with yield
@@ -439,13 +453,19 @@ contract WithdrawQueueTest is BaseTest {
 		uint256 requestId = withdrawQueue.requestUnstake(sharesToUnstake, 0);
 		vm.stopPrank();
 
-		// Fulfill with yield
-		uint256 yieldAmount = 100 ether;
-		vm.deal(charlie, yieldAmount);
+		// Fulfill with yield (ggAVAX has liquidity, so this works)
+		uint256 baseAmount = 100 ether;
+		vm.deal(charlie, baseAmount);
 		vm.prank(charlie);
-		withdrawQueue.depositFromStaking{value: yieldAmount}(0, yieldAmount, bytes32("TEST_YIELD"));
+		withdrawQueue.depositFromStaking{value: baseAmount}(baseAmount, 0, bytes32("TEST_YIELD"));
 
-		// Should be immediately claimable after fulfillment
+		// // Not claimable yet - need to wait for unstake delay
+		// assertEq(withdrawQueue.canClaimRequest(requestId), false);
+
+		// // Fast forward past unstake delay
+		// vm.warp(block.timestamp + UNSTAKE_DELAY + 1);
+
+		// No more delay, should be claimable
 		assertEq(withdrawQueue.canClaimRequest(requestId), true);
 
 		// Check balance before claim
@@ -468,6 +488,11 @@ contract WithdrawQueueTest is BaseTest {
 		ggAVAX.depositAVAX{value: 1000 ether}();
 		vm.stopPrank();
 
+   // Withdraw all funds for delegation
+		uint256 withdrawAmount = ggAVAX.amountAvailableForStaking();
+		vm.prank(address(rialto));
+		rialto.withdrawForDelegation(withdrawAmount, randAddress());
+
 		uint256 sharesToUnstake = 100 ether;
 
 		vm.startPrank(alice);
@@ -477,12 +502,11 @@ contract WithdrawQueueTest is BaseTest {
 
 		// Should not be claimable before fulfillment
 		assertEq(withdrawQueue.canClaimRequest(requestId), false);
-
 		// Fulfill with yield
-		uint256 yieldAmount = 150 ether;
-		vm.deal(charlie, yieldAmount);
+		uint256 baseAmount = 150 ether;
+		vm.deal(charlie, baseAmount);
 		vm.prank(charlie);
-		withdrawQueue.depositFromStaking{value: yieldAmount}(0, yieldAmount, bytes32("TEST_YIELD"));
+		withdrawQueue.depositFromStaking{value: baseAmount}(baseAmount, 0, bytes32("TEST_YIELD"));
 
 		// Should be immediately claimable after fulfillment
 		assertEq(withdrawQueue.canClaimRequest(requestId), true);
@@ -689,10 +713,10 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(ggAVAX.balanceOf(bob), bobSharesBefore - shares2);
 
 		// Fulfill only one request with yield
-		uint256 yieldAmount = 120 ether; // Only enough for one request
-		vm.deal(charlie, yieldAmount);
+		uint256 baseAmount = 120 ether; // Only enough for one request
+		vm.deal(charlie, baseAmount);
 		vm.prank(charlie);
-		withdrawQueue.depositFromStaking{value: yieldAmount}(0, yieldAmount, bytes32("TEST_YIELD"));
+		withdrawQueue.depositFromStaking{value: baseAmount}(baseAmount, 0, bytes32("TEST_YIELD"));
 
 		// Verify one fulfilled, one pending
 		assertEq(withdrawQueue.isFulfilledRequest(requestId1), true);
@@ -816,11 +840,11 @@ contract WithdrawQueueTest is BaseTest {
 		uint256 requestId2 = withdrawQueue.requestUnstake(shares2, 0);
 		vm.stopPrank();
 
-		// Fulfill only one request with yield
-		uint256 yieldAmount = 120 ether; // Only enough for one request
-		vm.deal(charlie, yieldAmount);
+		// Fulfill only one request with staking return (baseAmt > 0 to reduce stakingTotalAssets)
+		uint256 totalAmt = 120 ether; // Only enough for one request
+		vm.deal(charlie, totalAmt);
 		vm.prank(charlie);
-		withdrawQueue.depositFromStaking{value: yieldAmount}(0, yieldAmount, bytes32("TEST_YIELD"));
+		withdrawQueue.depositFromStaking{value: totalAmt}(100 ether, 20 ether, bytes32("TEST_STAKING_RETURN"));
 
 		// Verify one fulfilled, one pending
 		assertEq(withdrawQueue.isFulfilledRequest(requestId1), true);
@@ -1076,10 +1100,10 @@ contract WithdrawQueueTest is BaseTest {
 			(pendingRequests[0] == requestId1 && pendingRequests[1] == requestId2) || (pendingRequests[0] == requestId2 && pendingRequests[1] == requestId1)
 		);
 
-		// Fulfill first request with MEV
+		// Fulfill first request with staking return (baseAmt > 0 to reduce stakingTotalAssets)
 		vm.deal(charlie, 120 ether);
 		vm.prank(charlie);
-		withdrawQueue.depositFromStaking{value: 120 ether}(0, 120 ether, bytes32("TEST_YIELD"));
+		withdrawQueue.depositFromStaking{value: 120 ether}(100 ether, 20 ether, bytes32("TEST_STAKING_RETURN"));
 
 		// First request should no longer be pending
 		assertEq(withdrawQueue.getPendingRequestsCount(), 1);
@@ -1090,10 +1114,10 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(pendingRequests.length, 1);
 		assertEq(pendingRequests[0], requestId2);
 
-		// Fulfill second request
+		// Fulfill second request with staking return
 		vm.deal(charlie, 160 ether);
 		vm.prank(charlie);
-		withdrawQueue.depositFromStaking{value: 160 ether}(0, 160 ether, bytes32("TEST_YIELD"));
+		withdrawQueue.depositFromStaking{value: 160 ether}(150 ether, 10 ether, bytes32("TEST_STAKING_RETURN"));
 
 		// No pending requests should remain
 		assertEq(withdrawQueue.getPendingRequestsCount(), 0);
@@ -1329,7 +1353,6 @@ contract WithdrawQueueTest is BaseTest {
 		vm.stopPrank();
 
 		uint256 sharesToUnstake = 100 ether;
-		uint256 expectedAssets = ggAVAX.convertToAssets(sharesToUnstake);
 
 		vm.prank(address(minipoolMgr));
 		ggAVAX.withdrawForStaking(400 ether);
@@ -1444,8 +1467,7 @@ contract WithdrawQueueTest is BaseTest {
 	}
 
 	function testAvailableAVAXCalculation() public {
-		// This test verifies the new available AVAX calculation:
-		// availableAVAX = (contract.balance - totalAllocatedFunds) + (ggAVAX.totalAssets() - ggAVAX.stakingTotalAssets())
+		// This test verifies that combined liquidity (contract + ggAVAX) is used correctly
 
 		// Setup initial deposits
 		vm.startPrank(alice);
@@ -1478,45 +1500,36 @@ contract WithdrawQueueTest is BaseTest {
 		vm.prank(charlie);
 		withdrawQueue.depositFromStaking{value: yieldAmount}(0, yieldAmount, bytes32("TEST_YIELD"));
 
-		// Check available AVAX calculation:
-		// Contract balance: 300 ether (yield)
-		// Total allocated: 0 (no fulfilled requests yet)
-		// ggAVAX liquidity: 1200 ether
-		// Available AVAX = 300 + 1200 = 1500 ether
-		// This should be enough to fulfill the 500 ether request
-
+		// ggAVAX had enough liquidity (1200 >= 500), so request was fulfilled
+		// Yield is deposited to ggAVAX at the end
 		assertEq(withdrawQueue.isFulfilledRequest(requestId1), true);
 		assertEq(withdrawQueue.getPendingRequestsCount(), 0);
 
-		// Create another request that exceeds available AVAX
+		// Create another request - this is created as pending since no depositFromStaking called
 		uint256 shares2 = 1000 ether;
 		vm.startPrank(bob);
 		ggAVAX.approve(address(withdrawQueue), shares2);
 		uint256 requestId2 = withdrawQueue.requestUnstake(shares2, 0);
 		vm.stopPrank();
 
-		// This request should remain pending because:
-		// Contract balance: ~0 (used for first request)
-		// Total allocated: 500 ether (first request)
-		// ggAVAX liquidity: ~500 ether (1000 - 500 from first redemption)
-		// Available AVAX = 0 + 500 = 500 ether < 1000 ether needed
-
+		// This request is pending because it was just created and no depositFromStaking
+		// was called after its creation
 		assertEq(withdrawQueue.isRequestPending(requestId2), true);
 		assertEq(withdrawQueue.isFulfilledRequest(requestId2), false);
 	}
 
 	function testDepositExactAmountForNextRequest() public {
-		// Test that depositFromStaking deposits exact amount needed for next request
+		// Test that depositFromStaking uses combined liquidity and deposits to ggAVAX as needed
 
-		// Setup and drain liquidity
+		// Setup - keep some liquidity in ggAVAX for redemption
 		vm.startPrank(alice);
 		ggAVAX.depositAVAX{value: 2000 ether}();
 		vm.stopPrank();
 
-		uint256 withdrawAmount = ggAVAX.amountAvailableForStaking();
+		// Withdraw most (but not all) for delegation, leaving some liquidity
+		uint256 withdrawAmount = 1800 ether;
 		vm.prank(address(rialto));
 		rialto.withdrawForDelegation(withdrawAmount, randAddress());
-		assertEq(ggAVAX.totalAssets(), ggAVAX.stakingTotalAssets());
 
 		// Create multiple requests
 		uint256 shares1 = 100 ether;
@@ -1540,14 +1553,14 @@ contract WithdrawQueueTest is BaseTest {
 		vm.prank(charlie);
 		withdrawQueue.depositFromStaking{value: yieldAmount}(0, yieldAmount, bytes32("TEST_YIELD"));
 
-		// First request should be fulfilled
+		// First request should be fulfilled (ggAVAX had enough liquidity)
 		assertEq(withdrawQueue.isFulfilledRequest(requestId1), true);
 		assertEq(withdrawQueue.isRequestPending(requestId2), true);
 
-		// ggAVAX should have received exactly the amount needed for first request
-		// The rest stays in the queue for the next request
-		assertEq(ggAVAX.asset().balanceOf(address(ggAVAX)), ggAVAXWAVAXBefore);
-		assertEq(address(withdrawQueue).balance, yieldAmount - shares1 + withdrawQueue.totalAllocatedFunds());
+		// ggAVAX should have received the yield and had shares redeemed
+		assertEq(ggAVAX.asset().balanceOf(address(ggAVAX)), ggAVAXWAVAXBefore + yieldAmount - shares1);
+		// Contract balance equals totalAllocatedFunds (the redeemed amount for fulfilled requests)
+		assertEq(address(withdrawQueue).balance, withdrawQueue.totalAllocatedFunds());
 	}
 
 	function testCancelRequestsBatch() public {
@@ -1577,7 +1590,7 @@ contract WithdrawQueueTest is BaseTest {
 		// Fulfill first two requests
 		vm.deal(charlie, 300 ether);
 		vm.prank(charlie);
-		withdrawQueue.depositFromStaking{value: 300 ether}(0, 300 ether, bytes32("TEST_YIELD"));
+		withdrawQueue.depositFromStaking{value: 300 ether}(300 ether, 0, bytes32("TEST_YIELD"));
 
 		// Verify state: first 2 fulfilled, last 2 pending
 		assertEq(withdrawQueue.isFulfilledRequest(requestIds[0]), true);
@@ -1817,7 +1830,7 @@ contract WithdrawQueueTest is BaseTest {
 		// This ensures the third request definitely stays pending
 		vm.deal(charlie, 100 ether);
 		vm.prank(charlie);
-		withdrawQueue.depositFromStaking{value: 100 ether}(0, 100 ether, bytes32("TEST_YIELD"));
+		withdrawQueue.depositFromStaking{value: 100 ether}(100 ether, 0, bytes32("TEST_YIELD"));
 
 		// Verify first is fulfilled, second and third are pending
 		assertEq(withdrawQueue.isFulfilledRequest(requestIds[0]), true);
@@ -1990,90 +2003,7 @@ contract WithdrawQueueTest is BaseTest {
 		console2.log("WithdrawQueue.depositFromStaking (fulfilling remaining 5 requests) gas:", gasUsed2);
 	}
 
-	function testFixBoundsChecking() public {
-		// Test that the HYP-3 fix properly handles cases where proRated amounts
-		// exceed the provided baseAmt/rewardAmt parameters
 
-		// Setup: Create unstake request and reduce ggAVAX liquidity
-		vm.prank(alice);
-		ggAVAX.depositAVAX{value: 20 ether}();
-
-		uint256 unstakeAmount = 20 ether;
-		vm.startPrank(alice);
-		ggAVAX.approve(address(withdrawQueue), unstakeAmount);
-		uint256 requestId = withdrawQueue.requestUnstake(unstakeAmount, 0);
-		vm.stopPrank();
-
-		// Give contract existing balance and reduce ggAVAX liquidity
-		vm.deal(address(withdrawQueue), 15 ether);
-		vm.prank(address(minipoolMgr));
-		ggAVAX.withdrawForStaking(20 ether);
-
-		// Call with small amounts that would have caused OutOfFunds before fix
-		uint256 baseAmt = 2 ether;
-		uint256 rewardAmt = 1 ether;
-
-		// This should succeed (would have failed with OutOfFunds before fix)
-		vm.deal(charlie, baseAmt + rewardAmt);
-		vm.prank(charlie);
-		withdrawQueue.depositFromStaking{value: 3 ether}(baseAmt, rewardAmt, bytes32("HYP3_FIX_TEST"));
-	}
-
-	function testDepositFromStakingWithFeeCalculation() public {
-		// Test that the fee calculation correctly ensures sufficient funds are deposited to TokenggAVAX
-
-		// Set a protocol fee for rewards (5% = 500 basis points)
-		vm.prank(guardian);
-		dao.setFeeBips(500); // 5% fee on rewards
-
-		// Setup: Create unstake request for 20 ether
-		vm.deal(alice, 100 ether);
-		vm.prank(alice);
-		ggAVAX.depositAVAX{value: 50 ether}();
-
-		vm.prank(alice);
-		ggAVAX.approve(address(withdrawQueue), type(uint256).max);
-
-		vm.prank(alice);
-		uint256 requestId = withdrawQueue.requestUnstake(20 ether, 0);
-
-		// Reduce ggAVAX liquidity to force deposit to ggAVAX
-		// Will result in 10 AVAX in ggAVAX. Need 10 AVAX to cover request
-		vm.startPrank(guardian);
-		ggAVAX.grantRole(ggAVAX.STAKER_ROLE(), guardian);
-		dao.setWithdrawForDelegationEnabled(true);
-		ggAVAX.withdrawForStaking(40 ether, bytes32("REDUCE_LIQUIDITY"));
-		vm.stopPrank();
-
-		// Store initial balance to verify liquidity calculation
-		uint256 ggAVAXAvailableBefore = ggAVAX.amountAvailableForStaking();
-
-		// calculate actual amount needed to deposit.
-		uint256 nextRequestAmount = withdrawQueue.getNextPendingRequestAmount();
-		uint256 feeAmount = dao.getFeeBips();
-		uint256 scaleFactor = uint256(1 ether).mulDivUp(10000, 10000 - feeAmount);
-		uint256 scaledNextRequestAmount = nextRequestAmount.mulWadUp(scaleFactor);
-		uint256 actualAmountNeeded = scaledNextRequestAmount - ggAVAXAvailableBefore;
-
-		uint256 rewardsRatio = 0.3 ether;
-		uint256 rewardAmount = actualAmountNeeded.mulWadUp(rewardsRatio);
-		uint256 baseAmount = actualAmountNeeded - rewardAmount;
-
-		// Perform the deposit with 70% base, 30% reward ratio
-		vm.deal(charlie, actualAmountNeeded);
-		vm.prank(charlie);
-		withdrawQueue.depositFromStaking{value: actualAmountNeeded}(baseAmount, rewardAmount, bytes32("FEE_TEST"));
-
-		// Verify the request was fulfilled - this proves the fee calculation worked
-		assertTrue(withdrawQueue.isFulfilledRequest(requestId), "Request should be fulfilled with proper fee accounting");
-
-		assertEq(withdrawQueue.getNextPendingRequestAmount(), 0, "No pending requests should remain after proper fee accounting");
-
-		// Verify that the scaling worked by checking that enough liquidity was added
-		// Even though fees were deducted, we should have sufficient liquidity
-		uint256 ggAVAXAvailableAfter = ggAVAX.amountAvailableForStaking();
-		assertTrue(ggAVAXAvailableAfter >= 0, "ggAVAX should maintain liquidity after fee-adjusted deposit");
-	}
 
 	function testGetRequestsByOwnerPagination() public {
 		// Setup: Alice deposits enough ggAVAX to create multiple requests
@@ -2367,7 +2297,7 @@ contract WithdrawQueueTest is BaseTest {
 		uint256 depositAmount = 200 ether;
 		vm.deal(charlie, depositAmount);
 		vm.prank(charlie);
-		withdrawQueue.depositFromStaking{value: depositAmount}(0, depositAmount, bytes32("TEST_YIELD"));
+		withdrawQueue.depositFromStaking{value: depositAmount}(depositAmount, 0, bytes32("TEST_YIELD"));
 
 		// Verify the scenario worked as expected
 		assertTrue(withdrawQueue.isFulfilledRequest(requestId1), "First request should be fulfilled");

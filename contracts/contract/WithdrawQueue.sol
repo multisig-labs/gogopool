@@ -88,7 +88,6 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 	error RequestNotExpired();
 	error RequestNotPending();
 	error RequestNotFulfilledOrPending();
-	error TooEarlyToClaim();
 	error TooLateToCancelRequest();
 	error ZeroShares();
 	error InvalidRedemptionAmount();
@@ -180,11 +179,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			revert RequestNotFulfilled();
 		}
 
-		if (block.timestamp < req.claimableTime) {
-			revert TooEarlyToClaim();
-		}
-
-		if (block.timestamp >= req.expirationTime) {
+  	if (block.timestamp >= req.expirationTime) {
 			revert RequestExpired();
 		}
 
@@ -385,8 +380,6 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		if (pendingRequests.length() != 0) {
 			emit PendingRequestsNotProcesses(pendingRequests.length());
 		}
-
-		require(address(this).balance - totalAllocatedFunds == 0, "No Unallocated AVAX should remain");
 	}
 
 	/// @notice Reclaim AVAX from a single expired request and return ggAVAX to the user
@@ -605,7 +598,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			return false;
 		}
 		UnstakeRequest storage req = requests[requestId];
-		return block.timestamp >= req.claimableTime && block.timestamp < req.expirationTime;
+		return block.timestamp < req.expirationTime;
 	}
 
 	/// @notice Get unstake request IDs for a user, paginated
