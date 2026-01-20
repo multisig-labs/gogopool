@@ -69,13 +69,9 @@ contract WithdrawQueueFixForkTest2 is Test {
 	// Guardian address (from deployed addresses)
 	address constant GUARDIAN = 0x6C104D5b914931BA179168d63739A297Dc29bCF3;
 
-	// Fork at specific block to test the fix scenario
-	uint256 constant FORK_BLOCK = 76068820;
+  address constant DEPOSITOR = 0x56400ab86f80925F9b1FA1dC93e14Fc11CFA420D;
 
 	function setUp() public {
-		// Create fork at specific block
-		vm.createSelectFork("https://nd-058-850-167.p2pify.com/4e4706b8fc3a3bb4a5559c84671a1cf4/ext/bc/C/rpc", FORK_BLOCK);
-
 		// Use deployed contracts
 		ggAVAX = TokenggAVAX(payable(DEPLOYED_TOKENGGAVAX));
 		withdrawQueue = WithdrawQueue(payable(DEPLOYED_WITHDRAW_QUEUE));
@@ -84,6 +80,8 @@ contract WithdrawQueueFixForkTest2 is Test {
 	}
 
 	function test_WithdrawQueueFix() public {
+		string memory url = vm.envString("ETH_RPC_URL");
+		vm.createSelectFork(url);
 		logState();
 
 		// so now I want to deploy a new withdraw queue
@@ -94,7 +92,7 @@ contract WithdrawQueueFixForkTest2 is Test {
 		withdrawQueue = WithdrawQueue(payable(address(withdrawQueue)));
 
 		console2.log("\nRescuing stuck AVAX");
-		vm.prank(0x56400ab86f80925F9b1FA1dC93e14Fc11CFA420D);
+		vm.prank(DEPOSITOR);
 		withdrawQueue.rescueStuckAVAX(324_753 ether, 684_990_363_095_000_000_000);
 
 		logState();
