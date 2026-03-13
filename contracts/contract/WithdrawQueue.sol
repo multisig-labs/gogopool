@@ -179,7 +179,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 			revert RequestNotFulfilled();
 		}
 
-  	if (block.timestamp >= req.expirationTime) {
+		if (block.timestamp >= req.expirationTime) {
 			revert RequestExpired();
 		}
 
@@ -310,7 +310,7 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		// Immediately deposit all AVAX to ggAVAX for safety - ensures funds are always deposited correctly
 		if (msg.value > 0) {
 			_depositToGGAVAX(baseAmt, rewardAmt, source, msg.value);
-		  emit StakeDeposited(source, msg.sender, msg.value);
+			emit StakeDeposited(source, msg.sender, msg.value);
 		}
 
 		uint256 excessAVAX = 0;
@@ -319,6 +319,8 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 		// Process pending requests from front of queue, withdrawing from ggAVAX as needed
 		uint256 requestsProcessed = 0;
 		while (pendingRequests.length() > 0 && requestsProcessed < maxRequestsPerStakingDeposit) {
+			requestsProcessed++;
+
 			uint256 requestId = uint256(pendingRequestsQueue.front());
 			if (!pendingRequests.contains(requestId)) {
 				pendingRequestsQueue.popFront();
@@ -357,7 +359,6 @@ contract WithdrawQueue is Initializable, ReentrancyGuardUpgradeable, AccessContr
 				if (assetsReturned > req.expectedAssets) {
 					excessAVAX += assetsReturned - req.expectedAssets;
 				}
-				requestsProcessed++;
 			} catch (bytes memory reason) {
 				// Check if this is specifically an insufficient liquidity error
 				if (reason.length >= 4 && bytes4(reason) == TokenggAVAX.InsufficientLiquidity.selector) {

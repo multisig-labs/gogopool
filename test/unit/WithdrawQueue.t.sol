@@ -289,7 +289,7 @@ contract WithdrawQueueTest is BaseTest {
 		vm.stopPrank();
 	}
 
-  // Depositing only rewards, when there is no ggAVAX liquidity, should not error and not fulfill any pending requests
+	// Depositing only rewards, when there is no ggAVAX liquidity, should not error and not fulfill any pending requests
 	function testDepositAdditionalYieldDoesNotFulfillPendingRequests() public {
 		// Setup initial ggAVAX deposit for alice
 		vm.startPrank(alice);
@@ -299,7 +299,6 @@ contract WithdrawQueueTest is BaseTest {
 		uint256 withdrawAmount = ggAVAX.amountAvailableForStaking();
 		vm.prank(address(rialto));
 		rialto.withdrawForDelegation(withdrawAmount, randAddress());
-
 
 		uint256 ggAVAXWAVAXBefore = ggAVAX.asset().balanceOf(address(ggAVAX));
 
@@ -488,7 +487,7 @@ contract WithdrawQueueTest is BaseTest {
 		ggAVAX.depositAVAX{value: 1000 ether}();
 		vm.stopPrank();
 
-   // Withdraw all funds for delegation
+		// Withdraw all funds for delegation
 		uint256 withdrawAmount = ggAVAX.amountAvailableForStaking();
 		vm.prank(address(rialto));
 		rialto.withdrawForDelegation(withdrawAmount, randAddress());
@@ -1673,6 +1672,50 @@ contract WithdrawQueueTest is BaseTest {
 		assertEq(withdrawQueue.getRequestsByOwner(alice, 0, 0).length, 2);
 	}
 
+	function testDepositFromStakingAfterThreeThousandCancelledRequests() public {
+		uint256 cancelledRequests = 3000;
+		uint256 activeRequestShares = 1 ether;
+		uint256[] memory cancelledRequestIds = new uint256[](cancelledRequests);
+
+		vm.pauseGasMetering();
+		vm.startPrank(alice);
+		ggAVAX.depositAVAX{value: 3500 ether}();
+		ggAVAX.approve(address(withdrawQueue), type(uint256).max);
+
+		for (uint256 i = 0; i < cancelledRequests; i++) {
+			cancelledRequestIds[i] = withdrawQueue.requestUnstake(1 ether, 0);
+		}
+
+		for (uint256 i = 0; i < cancelledRequests; i++) {
+			withdrawQueue.cancelRequest(cancelledRequestIds[i]);
+			assertEq(withdrawQueue.getRequestInfo(cancelledRequestIds[i]).requester, address(0));
+		}
+
+		uint256 activeRequestId = withdrawQueue.requestUnstake(activeRequestShares, 0);
+		uint256 activeRequestAssets = withdrawQueue.getRequestInfo(activeRequestId).expectedAssets;
+		vm.stopPrank();
+
+		assertEq(withdrawQueue.getPendingRequestsCount(), 1);
+		assertEq(withdrawQueue.nextRequestId(), cancelledRequests + 1);
+		vm.resumeGasMetering();
+
+		uint256 feeBips = dao.getFeeBips();
+		uint256 rewardDeposit =
+			(activeRequestAssets * 10000 + (10000 - feeBips) - 1) / (10000 - feeBips) + 1;
+
+		vm.deal(address(this), rewardDeposit);
+		vm.prank(charlie);
+		uint256 gasStart = gasleft();
+		withdrawQueue.depositFromStaking{value: rewardDeposit}(0, rewardDeposit, bytes32("TEST_CLEAN_STALE_QUEUE"));
+		uint256 gasUsed = gasStart - gasleft();
+
+		assertLt(gasUsed, 8_000_000, "depositFromStaking exceeded 8M gas limit");
+		console2.log("WithdrawQueue.depositFromStaking gas used with 8M cap:", gasUsed);
+
+		assertEq(withdrawQueue.isRequestPending(activeRequestId), true);
+		assertEq(withdrawQueue.getPendingRequestsCount(), 1);
+	}
+
 	function testCancelNonExistentRequest() public {
 		vm.prank(alice);
 		vm.expectRevert(WithdrawQueue.RequestNotFound.selector);
@@ -2002,8 +2045,6 @@ contract WithdrawQueueTest is BaseTest {
 
 		console2.log("WithdrawQueue.depositFromStaking (fulfilling remaining 5 requests) gas:", gasUsed2);
 	}
-
-
 
 	function testGetRequestsByOwnerPagination() public {
 		// Setup: Alice deposits enough ggAVAX to create multiple requests
