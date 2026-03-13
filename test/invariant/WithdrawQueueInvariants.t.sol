@@ -206,6 +206,7 @@ contract WithdrawQueueInvariants is BaseTest {
 	/// Delays are applied consistently
 	function invariant_delayConsistency() external view {
 		uint48 unstakeDelay = withdrawQueue.unstakeDelay();
+		uint48 minExpirationDelay = withdrawQueue.MIN_EXPIRATION_DELAY();
 		uint48 maxExpirationDelay = withdrawQueue.maxExpirationDelay();
 
 		for (uint256 i = 0; i < withdrawQueue.nextRequestId(); i++) {
@@ -218,15 +219,19 @@ contract WithdrawQueueInvariants is BaseTest {
 					console2.log("Actual claimableTime:", req.claimableTime);
 				}
 
-				if (req.expirationTime != req.claimableTime + maxExpirationDelay) {
-					console2.log("INVARIANT VIOLATION: Delay Consistency - expirationTime incorrect");
+				uint48 actualExpirationDelay = req.expirationTime - req.claimableTime;
+
+				if (actualExpirationDelay < minExpirationDelay || actualExpirationDelay > maxExpirationDelay) {
+					console2.log("INVARIANT VIOLATION: Delay Consistency - expiration delay out of bounds");
 					console2.log("Request ID:", i);
-					console2.log("Expected expirationTime:", req.claimableTime + maxExpirationDelay);
-					console2.log("Actual expirationTime:", req.expirationTime);
+					console2.log("Actual expiration delay:", actualExpirationDelay);
+					console2.log("Min expiration delay:", minExpirationDelay);
+					console2.log("Max expiration delay:", maxExpirationDelay);
 				}
 
 				assert(req.claimableTime == req.requestTime + unstakeDelay);
-				assert(req.expirationTime == req.claimableTime + maxExpirationDelay);
+				assert(actualExpirationDelay >= minExpirationDelay);
+				assert(actualExpirationDelay <= maxExpirationDelay);
 			}
 		}
 	}

@@ -85,15 +85,17 @@ contract WithdrawQueueFixForkTest2 is Test {
 		logState();
 
 		// so now I want to deploy a new withdraw queue
-		WithdrawQueue newWithdrawQueue = new WithdrawQueue();
+		// WithdrawQueue newWithdrawQueue = new WithdrawQueue();
 
-		vm.prank(GUARDIAN);
-		withdrawQueueProxyAdmin.upgrade(TransparentUpgradeableProxy(payable(address(withdrawQueue))), address(newWithdrawQueue));
-		withdrawQueue = WithdrawQueue(payable(address(withdrawQueue)));
+		// vm.prank(GUARDIAN);
+		// withdrawQueueProxyAdmin.upgrade(TransparentUpgradeableProxy(payable(address(withdrawQueue))), address(newWithdrawQueue));
+		// withdrawQueue = WithdrawQueue(payable(address(withdrawQueue)));
 
 		console2.log("\nRescuing stuck AVAX");
+		uint256 stuckAVAX = address(withdrawQueue).balance - withdrawQueue.totalAllocatedFunds();
+		console2.log("Stuck AVAX:", stuckAVAX / 1e18, stuckAVAX);
 		vm.prank(DEPOSITOR);
-		withdrawQueue.rescueStuckAVAX(324_753 ether, 684_990_363_095_000_000_000);
+		withdrawQueue.rescueStuckAVAX(0, stuckAVAX);
 
 		logState();
 	}

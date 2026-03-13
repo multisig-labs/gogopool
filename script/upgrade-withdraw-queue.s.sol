@@ -16,12 +16,17 @@ import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.so
 
 contract UpgradeWithdrawQueue is Script, EnvironmentConfig {
 	function run() external {
+
 		loadAddresses();
 		loadUsers();
 		address deployer = getUser("deployer");
-		require(deployer.balance > 0.1 ether, "Insufficient funds to deploy");
 
 		vm.startBroadcast(deployer);
+		console2.log("Deployer:", deployer);
+		console2.log("Deployer balance:", deployer.balance);
+		console2.log("chainid:", block.chainid);
+		require(deployer.balance > 0.1 ether, "Insufficient funds to deploy");
+
 
 		// Deploy all contracts
 		deployWithdrawQueue();
