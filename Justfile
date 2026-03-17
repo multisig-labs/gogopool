@@ -57,7 +57,7 @@ verify-mainnet contract:
 
 # Verify a contract that doesnt have a constructor
 verify-mainnet-no-storage contract:
-	forge verify-contract --chain-id 43114 --num-of-optimizations 1000 --watch --compiler-version v0.8.17+commit.8df45f5f $(jq -r .{{contract}} deployed/43114-addresses.json) contracts/contract/{{contract}}.sol:{{contract}} -e ${ETHERSCAN_API_KEY}
+	forge verify-contract --chain-id 43114 --num-of-optimizations 500 --watch --compiler-version v0.8.17+commit.8df45f5f $(jq -r .{{contract}} deployed/43114-addresses.json) contracts/contract/{{contract}}.sol:{{contract}} -e ${ETHERSCAN_API_KEY}
 
 
 # Verify a fuji contract after it has been deployed
@@ -209,13 +209,13 @@ get-contracts:
     echo $CONTRACT_PATH
     contract_name=$(basename $contract_path .json)
     CURRENT_CONTRACT="generated/contracts/$contract_name.ts"
-    
+
     cp $CONTRACT_PATH generated/contracts
     mv generated/contracts/$contract_name.json generated/contracts/$contract_name.ts
 
     sed -i '' '1,5d' $CURRENT_CONTRACT
 
-    sed -i '' "1i\ 
+    sed -i '' "1i\
     const $contract_name = [" $CURRENT_CONTRACT
 
     sed -i '' '/"bytecode":/,$d' $CURRENT_CONTRACT
@@ -233,7 +233,7 @@ get-contracts:
   cp deployed/43113-addresses.json generated/addresses/43113.ts
   sed -i '' '1i\
   export const FUJI_ADDRESSES: Record<string, `0x${string}`> = ' generated/addresses/43113.ts
-  
+
   cp deployed/43114-addresses.json generated/addresses/43114.ts
   sed -i '' '1i\
   export const MAINNET_ADDRESSES: Record<string, `0x${string}`> = ' generated/addresses/43114.ts
